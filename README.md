@@ -30,10 +30,13 @@ BankSystem/
 │   └── person.py       # Entidades e Value Objects (AccountCard)
 ├── infra/              # Camada de Infraestrutura (I/O & Config)
 │   ├── config.py       # Configuration as Code (TypedDicts)
-│   └── io_utils.py     # Motor de I/O Agnóstico e Loops de Retry
+│   ├── io_utils.py     # Motor de I/O Agnóstico e Loops de Retry
+│   ├── verify.py       # Guardrails de Tipagem (Low-level checks)
+│   └── views.py        # Camada de Apresentação (CLI Screens)
 ├── shared/             # Kernel Compartilhado
 │   ├── exceptions.py   # Taxonomia de Erros Hierárquica
-│   └── types.py        # Enums Semânticos e Contextos
+│   ├── types.py        # Enums Semânticos e Contextos
+│   └── validators.py   # Adaptadores de Validação (CPF & Decorators)
 └── main.py             # Composition Root & Entrypoint
 
 Patterns Implementados
