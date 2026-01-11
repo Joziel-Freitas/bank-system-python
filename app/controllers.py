@@ -1,0 +1,1124 @@
+from abc import ABC, abstractmethod
+from decimal import Decimal
+from functools import partial
+from typing import Any, Callable, ClassVar, Generic, NamedTuple, TypeVar, cast
+
+from domain.account import Account, CheckingAccount, SavingsAccount
+from domain.bank import AuthToken, Bank
+from domain.person import AccountCard, Client, Person
+from infra import config, io_utils, verify, views
+from infra.io_utils import (
+    CallbackReturn,
+    InputType,
+    config_loop,
+    get_single_input,
+    validate_entry,
+)
+from shared.exceptions import (
+    ACCOUNT_ERROR_MAP,
+    BANK_ERROR_MAP,
+    PERSON_ERROR_MAP,
+    AccountNotFoundError,
+    BankMethodError,
+    BankPasswordError,
+    BankSecurityError,
+    BlockedAccountError,
+    ClientNotFoundError,
+    ControllerLoginError,
+    ControllerOperationError,
+    ControllerRegisterError,
+    DomainError,
+    ErrorMapType,
+    NotEmptyAccountError,
+    UserAbortError,
+    map_exceptions,
+)
+from shared.types import BankContext, OperationType, TransactionType
+from shared.validators import ValidatorCallback, boolean_validator_dec, validate_cpf
+
+COMMON_VALIDATORS: dict[str, ValidatorCallback] = {
+    "cpf": boolean_validator_dec(validate_cpf),
+    "branch_code": boolean_validator_dec(Account.validate_branch_code),
+    "account_num": boolean_validator_dec(Account.validate_account_number),
+    "password": boolean_validator_dec(Bank.validate_password),
+}
+
+CreatableT = TypeVar("CreatableT", bound=Person | Account)
+ClientDataT = TypeVar("ClientDataT", bound=Client | str)
+T = TypeVar("T", bound=Bank | Person | Account)
+R = TypeVar("R")
+
+UserInputT = TypeVar("UserInputT", bound=InputType)
+
+
+class RegisterOptions(NamedTuple):
+    registered: bool
+    new_account: bool | None
+
+
+def _verify_config_map(obj_config: config.ConfigMap) -> None:
+    """
+    Verifies if the configuration map follows the expected nested dictionary structure.
+
+    Args:
+        obj_config (config.ConfigMap):
+            The configuration map to be verified. Must be a dict of dicts.
+
+    Raises:
+        TypeError:
+            If the structure does not match Dict[str, Dict[...]].
+    """
+    try:
+        verify.verify_instance(obj_config, dict)
+
+        for key, inner_dict in obj_config.items():
+            verify.verify_instance(key, str)
+            verify.verify_instance(inner_dict, dict)
+    except verify.VERIFY_ERRORS as e:
+        raise TypeError("Unsupported configuration format") from e
+
+
+def _assert_input(user_in: InputType, expected_type: type[UserInputT]) -> UserInputT:
+    if isinstance(user_in, expected_type):
+        return user_in
+
+    raise TypeError(
+        f"Critical error in I/O logic. Expected type {expected_type}, got {type(user_in).__name__}"
+    )
+
+
+class BaseController(ABC, Generic[T, R]):
+    """
+    Abstract Base Class for all Application Controllers.
+
+    Establishes the contract for Input/Output orchestration. Subclasses must implement
+    the 'run_controller' method to define the specific flow (creation or transaction).
+
+    Attributes:
+        _model_class (Type[T]):
+            The domain class (Person, Account, Bank) managed by this controller.
+        _validation_mapper (ClassVar[dict]):
+            Static dictionary mapping field names to validation functions.
+    """
+
+    _model_class: type[T]
+    _validation_mapper: ClassVar[dict[str, ValidatorCallback]]
+
+    def __init__(self, model_class: type[T]):
+        """
+        Initializes the controller with model type and error mapping rules.
+
+        Args:
+            model_class (Type[T]):
+                The concrete class type (Bank, Person, Account) to be managed.
+        Raises:
+            TypeError: If model_class is not a valid Domain Entity subclass.
+        """
+        verify.verify_instance(model_class, type)
+        if not issubclass(model_class, (Bank, Person, Account)):
+            raise TypeError(
+                f"model_class {model_class} must be a subclass of Bank, Person, or Account."
+            )
+
+        self._model_class = model_class
+
+    def __repr__(self) -> str:
+        class_name = type(self).__name__
+        return f"{class_name}({self._model_class.__name__})"
+
+    @abstractmethod
+    def run_controller(self) -> R:
+        """
+        Executes the main business logic of the controller.
+
+        Returns:
+            R: The result of the controller execution (Object or None).
+        """
+        raise NotImplementedError()
+
+
+class CreationController(BaseController[CreatableT, CreatableT | None]):
+    """
+    Controller responsible for the instantiation workflow of new entities.
+
+    It handles the UI loop to collect data for Person or Account creation,
+    manages validation errors by re-prompting specific fields, and calls
+    the ObjectFactory to instantiate the class.
+    """
+
+    _validation_mapper = COMMON_VALIDATORS.copy() | {
+        "name": boolean_validator_dec(Person.validate_name),
+        "birth_date": boolean_validator_dec(Person.validate_birth_date),
+        "balance": boolean_validator_dec(Account.validate_account_initial_balance),
+    }
+
+    _obj_config: config.ConfigMap
+    _obj_error_map: ErrorMapType
+
+    def __init__(
+        self,
+        model_class: type[CreatableT],
+        obj_error_map: ErrorMapType,
+        obj_config: config.ConfigMap,
+    ):
+        super().__init__(model_class)
+
+        _verify_config_map(obj_config)
+        self._obj_config = obj_config
+
+        self._obj_error_map = obj_error_map
+
+    def __repr__(self) -> str:
+        class_name = type(self).__name__
+        config_keys = list(self._obj_config.keys())
+
+        return (
+            f"{class_name}"
+            f"(model_class={self._model_class.__name__}, "
+            f"configured_fields={config_keys!r})"
+        )
+
+    def run_controller(self) -> CreatableT:
+        """
+        Orchestrates the creation loop: Input -> Validate -> Factory -> Retry on Error.
+
+        The loop continues until the ObjectFactory successfully returns a valid instance.
+        If a DomainError occurs (e.g., Invalid CPF logic), the exception mapper identifies
+        which field caused it, and the loop requests only that specific field again.
+
+        Returns:
+            CreatableT: A fully initialized instance of Person or Account.
+        """
+        controller_validator_cb = partial(
+            validate_entry, validation_mapper=self._validation_mapper
+        )
+
+        object_attr = io_utils.config_loop(self._obj_config, controller_validator_cb)
+        object_attr = cast(dict[str, Any], object_attr)
+
+        while True:
+            try:
+                return self._model_class(**object_attr)
+            except DomainError as error:
+                config_key = map_exceptions(error, self._obj_error_map)
+                new_value = get_single_input(
+                    config_key, self._obj_config, controller_validator_cb
+                )
+                object_attr[config_key] = new_value
+
+
+class TransactionController(BaseController[Account, None]):
+    """
+    Controller responsible for executing banking transactions (Deposit, Withdraw, Statement).
+
+    Operates in a 'Stateful' manner regarding the session token, but requires
+    'Just-in-Time' password authentication to unlock the Account object.
+
+     Lifecycle:
+    1. Initialization: Receives a valid AuthToken from the parent controller.
+    2. Access Loop: Prompts for password to retrieve the Account instance.
+    3. Operation Loop: Orchestrates financial operations until logout or exit.
+    """
+
+    _validation_mapper = COMMON_VALIDATORS.copy() | {
+        "withdraw": boolean_validator_dec(
+            partial(verify.verify_interval, min_val=Decimal("0.5"), max_val=None)
+        ),
+        "deposit": boolean_validator_dec(
+            partial(verify.verify_interval, min_val=Decimal("0.5"), max_val=None)
+        ),
+        "operations": boolean_validator_dec(
+            partial(verify.verify_interval, min_val=1, max_val=3)
+        ),
+        "limit": boolean_validator_dec(
+            partial(verify.verify_interval, min_val=1, max_val=2)
+        ),
+        "options": boolean_validator_dec(
+            partial(verify.verify_interval, min_val=1, max_val=2)
+        ),
+    }
+
+    _bank_instance: Bank
+    _transaction_config: config.ConfigMap
+    _auth_token: AuthToken
+    _model_account: Account | None
+
+    def __init__(
+        self,
+        bank_instance: Bank,
+        auth_token: AuthToken,
+        transaction_config: config.ConfigMap,
+    ):
+
+        super().__init__(Account)
+
+        verify.verify_instance(bank_instance, Bank)
+        self._bank_instance = bank_instance
+
+        _verify_config_map(transaction_config)
+        self._transaction_config = transaction_config
+
+        self._controller_validator_cb = partial(
+            validate_entry, validation_mapper=self._validation_mapper
+        )
+        self._auth_token = auth_token
+        self._model_account = None
+
+    def __repr__(self) -> str:
+        class_name = type(self).__name__
+        has_account = self._model_account is not None
+
+        return (
+            f"{class_name}("
+            f"bank={self._bank_instance._bank_name!r},"
+            f"user_cpf={self._auth_token.client_cpf!r}, "
+            f"account_accessed={has_account})"
+        )
+
+    @property
+    def _active_account(self) -> Account:
+        """
+        Returns the active account instance.
+
+        Raises:
+            RuntimeError: If called before account access is granted.
+        """
+        if self._model_account is None:
+            raise RuntimeError("Account access failed. Execute _get_access() method")
+        return self._model_account
+
+    def _get_access(self) -> bool:
+        """
+        Attempts to authorize access to the Account using the provided password.
+
+        Uses the pre-existing AuthToken to request the Account object from the Bank.
+        This method is the gatekeeper that transforms a 'Session' (Token) into
+        'Access' (Model Object).
+
+        Returns:
+            bool: True if the password is correct and access is granted.
+                  False if the password is incorrect (allows retries).
+
+        Raises:
+            BlockedAccountError: Propagated immediately if the account is frozen.
+                                 The controller does NOT catch this here, allowing
+                                 the loop to handle the lockout state.
+            RuntimeError: If a security mismatch (e.g., Token Signature) occurs.
+        """
+        key = "password"
+        user_in = get_single_input(
+            key, self._transaction_config, self._controller_validator_cb
+        )
+        user_in = _assert_input(user_in, str)
+        try:
+            self._model_account = self._bank_instance.get_account(
+                self._auth_token, user_in
+            )
+            return True
+        except AccountNotFoundError:
+            return False
+        except BankSecurityError as error:
+            raise RuntimeError(
+                "CRITICAL SECURITY FAILURE: Session integrity compromised."
+            ) from error
+
+    def _access_loop(self) -> bool | None:
+        """
+        Manages the authentication retry logic (Max 3 attempts).
+
+        Handles the transition between 'Unauthorized' and 'Authorized' states.
+        It specifically interprets the 'BlockedAccountError' to terminate the
+        controller flow gracefully if the account gets frozen during the process.
+
+        Returns:
+            bool | None:
+                - True: Access granted (Account object is ready).
+                - False: User manually aborted or exhausted retries (Logic dependent).
+                - None: Account is frozen/blocked. The controller must exit.
+        """
+        for attempt in range(3):
+            try:
+                if self._get_access():
+                    views.controller_output(mapper_key="access", status_key=True)
+                    return True
+
+                views.controller_output(mapper_key="access", status_key=False)
+                if attempt == 1:
+                    views.controller_output(mapper_key="access", status_key="1")
+            except BlockedAccountError:
+                views.controller_output(mapper_key="access", status_key="0")
+                return None
+
+    def _get_transaction_type(self) -> TransactionType:
+        """
+        Prompts the user to select an operation (1=Withdraw, 2=Deposit, 3=Statement).
+
+        Returns:
+            TransactionType: The enum corresponding to the user choice.
+        """
+        key = "operations"
+        int_transaction = get_single_input(
+            key, self._transaction_config, self._controller_validator_cb
+        )
+        transaction = TransactionType(int_transaction)
+
+        return transaction
+
+    def _get_operation_value(self, operation_option: TransactionType) -> Decimal:
+        """
+        Prompts the user for the numeric value of the transaction.
+
+        Dynamically selects the configuration ('withdraw' or 'deposit') based on
+        the operation type and delegates input collection to the I/O utility.
+
+        Args:
+            operation_option (TransactionType): The operation being performed.
+
+        Returns:
+            Decimal: The validated monetary value to be deposited or withdrawn.
+
+        Raises:
+            UserAbortError: If the user enters the exit command during input.
+        """
+        operations_configs: config.ConfigMap = {
+            k: self._transaction_config[k] for k in ("withdraw", "deposit")
+        }
+
+        operation_mapper = {
+            TransactionType.WITHDRAW: "withdraw",
+            TransactionType.DEPOSIT: "deposit",
+        }
+
+        operation_key = operation_mapper[operation_option]
+        value_raw = get_single_input(
+            operation_key, operations_configs, self._controller_validator_cb
+        )
+        value = _assert_input(value_raw, Decimal)
+
+        return value
+
+    def _authorize_withdraw(self, value: Decimal) -> bool:
+        """
+        Verifies if the withdrawal is authorized by the Account rules.
+
+        If the account uses a limit (overdraft), prompts the user for confirmation.
+
+        Args:
+            value (Decimal): The amount to be withdrawn.
+
+        Returns:
+            bool: True if authorized (and confirmed by user if limit needed), False otherwise.
+
+        Raises:
+            RuntimeError: If the validation state returns an invalid combination.
+        """
+        info = self._active_account.check_withdrawal(value)
+
+        if not info.authorized:
+            views.controller_output("transaction", None)
+            return False
+
+        if info.uses_limit is False:
+            return True
+
+        if info.uses_limit is True:
+            views.controller_output("transaction", False)
+            limit_option = get_single_input(
+                "limit", self._transaction_config, self._controller_validator_cb
+            )
+            limit_option = _assert_input(limit_option, int)
+
+            limit_mapper = {1: True, 2: False}
+            use_limit = limit_mapper[limit_option]
+            return use_limit
+        raise RuntimeError(f"Invalid withdraw state: {info}")
+
+    def _operation_flow(self) -> None:
+        """
+        Executes the selected banking operation (Strategy Pattern via Match).
+
+        Handles Statement, Withdraw (with authorization), and Deposit.
+
+        Raises:
+            UserAbortError: If user cancels a withdrawal that requires limit confirmation.
+            RuntimeError: If an unknown transaction type is encountered.
+        """
+        operation: TransactionType = self._get_transaction_type()
+
+        match operation:
+            case TransactionType.STATEMENT:
+                statement = self._active_account.get_statement
+                balance = self._active_account.balance
+                views.show_statement(statement, balance)
+            case TransactionType.WITHDRAW:
+                value = self._get_operation_value(operation)
+                if self._authorize_withdraw(value):
+                    self._active_account.withdraw(value)
+                    views.controller_output("transaction", True)
+            case TransactionType.DEPOSIT:
+                value = self._get_operation_value(operation)
+                self._active_account.deposit(value)
+                views.controller_output("transaction", True)
+            case _:
+                raise RuntimeError("Unexpected controller error")
+
+    def _select_operation(self) -> bool | None:
+        """
+        Prompts the user to determine the next step: Continue or Exit.
+
+        Returns:
+            bool: True if the user chooses to perform another operation (Option 1).
+            None: If the user chooses to return to the main menu (Option 2).
+                  This signals the termination of the transaction loop.
+        """
+        menu_mapper = {1: True, 2: None}
+
+        key = "options"
+        user_in = get_single_input(
+            key, self._transaction_config, self._controller_validator_cb
+        )
+        user_in = _assert_input(user_in, int)
+        return menu_mapper[user_in]
+
+    def run_controller(self) -> None:
+        """
+        Main execution loop for the transaction session.
+
+        Manages the cycle of access validation and financial operations.
+        If an operation is aborted (UserAbortError), the loop terminates immediately,
+        returning control to the main application menu.
+
+        Flow:
+        1. Validate Access (Password check via _access_loop).
+        2. Execute Operation (Deposit, Withdraw, or Statement).
+        3. Determine next step (Continue, Logout, or Exit System).
+        """
+        accessed = False
+
+        while True:
+            try:
+                if accessed is False:
+                    accessed = self._access_loop()
+                elif accessed is None:
+                    views.controller_output("general", "exit")
+                    break
+                elif accessed is True:
+                    self._operation_flow()
+                    accessed = self._select_operation()
+                    if accessed is None:
+                        views.controller_output("general", "exit")
+                        break
+            except UserAbortError:
+                views.controller_output("general", "exit")
+                break
+
+
+class BankSystemController(BaseController[Bank, None]):
+
+    _validation_mapper = COMMON_VALIDATORS.copy() | {
+        "is_client": boolean_validator_dec(
+            partial(verify.verify_interval, min_val=1, max_val=2)
+        ),
+        "new_account": boolean_validator_dec(
+            partial(verify.verify_interval, min_val=1, max_val=2)
+        ),
+        "account_menu": boolean_validator_dec(
+            partial(verify.verify_interval, min_val=1, max_val=3)
+        ),
+        "acc_type": boolean_validator_dec(
+            partial(verify.verify_interval, min_val=1, max_val=2)
+        ),
+        "name": boolean_validator_dec(Person.validate_name),
+        "birth_date": boolean_validator_dec(Person.validate_birth_date),
+        "use_card": boolean_validator_dec(
+            partial(verify.verify_interval, min_val=1, max_val=2)
+        ),
+    }
+
+    _bank_instance: Bank
+    _auth_config: config.ConfigMap
+    _system_config: config.ConfigMap
+    _auth_token: AuthToken | None
+    _active_card: AccountCard | None
+
+    def __init__(self, bank_instance: Bank):
+        """
+        Initializes the BankSystemController.
+
+        Sets up the connection to the Bank 'Model', loads system configurations,
+        and initializes the validator callbacks. The session state (_auth_token)
+        starts as None.
+
+        Args:
+            bank_instance (Bank): The main banking system instance.
+        """
+        super().__init__(Bank)
+        self._bank_instance = bank_instance
+
+        _verify_config_map(config.initial_config)
+        self._system_config = config.initial_config
+        _verify_config_map(config.auth_config)
+        self._auth_config = config.auth_config
+
+        self._controller_validator_cb = partial(
+            validate_entry, validation_mapper=self._validation_mapper
+        )
+        self._auth_token = None
+        self._active_card = None
+
+    def __repr__(self) -> str:
+        class_name = type(self).__name__
+
+        token_status = "Logged In" if self._auth_token else "Logged Out"
+        card_status = "Card Inserted" if self._active_card else "No Card"
+
+        return (
+            f"{class_name}("
+            f"connected_to={self._bank_instance.bank_name!r}"
+            f"session_status={token_status!r}"
+            f"hardware_status={card_status!r})"
+        )
+
+    @property
+    def _active_token(self) -> AuthToken:
+        """
+        Retrieves the currently active authentication token.
+
+        Acts as a strict guard for methods that require an authenticated session.
+        If called before login (or after logout), it raises a runtime error to
+        prevent operations on an invalid state.
+
+        Returns:
+            AuthToken: The active session token.
+
+        Raises:
+            RuntimeError: If called when no user is logged in.
+        """
+        if self._auth_token is None:
+            raise RuntimeError("Property called out of order")
+        return self._auth_token
+
+    def _get_initial_options(self) -> RegisterOptions:
+        """
+        Collects the user's initial intent (Login vs. Registration).
+
+        Prompts the user to identify if they are an existing client or wish to
+        open a new account. Maps the numeric menu inputs to a structured
+        RegisterOptions named tuple for easier decision making in the main loop.
+
+        Returns:
+            RegisterOptions: A tuple containing boolean flags for 'registered'
+                             and 'new_account'.
+        """
+        is_client_map = {1: True, 2: False}
+        new_account_map = {1: False, 2: True}
+
+        is_client_raw = get_single_input(
+            "is_client", config.initial_config, self._controller_validator_cb
+        )
+        is_client_op = _assert_input(is_client_raw, int)
+        is_client = is_client_map[is_client_op]
+
+        if not is_client:
+            return RegisterOptions(registered=False, new_account=None)
+
+        new_account_raw = get_single_input(
+            "new_account", config.initial_config, self._controller_validator_cb
+        )
+        new_account_op = _assert_input(new_account_raw, int)
+        new_account = new_account_map[new_account_op]
+
+        return RegisterOptions(registered=True, new_account=new_account)
+
+    def _get_password(self) -> str:
+        """
+        Helper method to collect and enforce string type for the password input.
+
+        Returns:
+            str: The password provided by the user.
+        Raises:
+            RuntimeError: If the input validator returns a non-string type.
+        """
+        password = get_single_input(
+            "password", config.new_account_config, self._controller_validator_cb
+        )
+        if isinstance(password, str):
+            return password
+        raise RuntimeError(f"password must be a string, got {type(password).__name__}")
+
+    def _get_client_cpf(self) -> str:
+        """
+        Helper method to collect and enforce string type for the CPF input.
+
+        Returns:
+            str: The CPF provided by the user.
+        """
+        client_cpf = get_single_input(
+            "cpf", config.identification_config, self._controller_validator_cb
+        )
+        client_cpf = _assert_input(client_cpf, str)
+        return client_cpf
+
+    def _create_client(self) -> Client:
+        """
+        Delegates the Person/Client creation workflow to the CreationController.
+
+        Injects the Client class and the specific error mapping for Person
+        validation (e.g., Name, Birth Date, CPF).
+
+        Returns:
+            Client: A fully initialized Client instance.
+        """
+        controller_obj = CreationController(
+            Client, PERSON_ERROR_MAP, config.identification_config
+        )
+        return controller_obj.run_controller()
+
+    def _create_account(self) -> Account:
+        """
+        Delegates the Account creation workflow to the CreationController.
+
+        Handles the preliminary step of asking the user for the Account Type
+        (Checking vs. Savings) to inject the correct class type into the
+        CreationController. Cleans up the config map to remove fields already
+        collected (like acc_type).
+
+        Returns:
+            Account: A fully initialized Account instance.
+        """
+        acc_type_map = {1: CheckingAccount, 2: SavingsAccount}
+
+        acc_type = get_single_input(
+            "acc_type", config.new_account_config, self._controller_validator_cb
+        )
+        acc_type = _assert_input(acc_type, int)
+
+        create_account_config = config.new_account_config.copy()
+        create_account_config.pop("acc_type")
+        create_account_config.pop("password")
+
+        controller_obj = CreationController(
+            acc_type_map[acc_type], ACCOUNT_ERROR_MAP, create_account_config
+        )
+        return controller_obj.run_controller()
+
+    def _try_register_loop(
+        self,
+        get_client_cb: Callable[[], ClientDataT],
+        register_fn: Callable[[ClientDataT, Account, str], None],
+        output_key: str,
+    ) -> None:
+        """
+        Orchestrates a robust registration loop with error handling and field retry.
+
+        Collects necessary data using the provided callbacks and attempts to
+        register the entity in the Bank system. If a Domain Error occurs (e.g.,
+        Duplicated CPF, Invalid Password), it catches the specific error context
+        and re-prompts only for the problematic field, rather than restarting
+        the entire process.
+
+        Args:
+            get_client_cb: Callback function to retrieve client data (Person/Client).
+            register_fn: Callback function to execute the bank registration logic.
+            output_key: The key used for View feedback messages.
+
+        Raises:
+            RuntimeError: If initial data collection fails completely.
+        """
+        client = get_client_cb()
+        account = self._create_account()
+        password = self._get_password()
+
+        if not all([client, account, password]):
+            raise RuntimeError(
+                "Registration process failed. All fields must be provided"
+            )
+
+        while True:
+            try:
+                register_fn(client, account, password)
+                views.controller_output(output_key, True)
+                break
+            except BankMethodError as error:
+                error_context = map_exceptions(error, BANK_ERROR_MAP)
+
+            match error_context:
+                case BankContext.CLIENT:
+                    client = get_client_cb()
+                    views.controller_output(output_key, "client")
+                case BankContext.ACCOUNT:
+                    account = self._create_account()
+                    views.controller_output(output_key, "account")
+                case BankContext.PASSWORD:
+                    password = self._get_password()
+                    views.controller_output(output_key, "password")
+                case _:
+                    raise RuntimeError("Invalid object context")
+
+    def _get_credentials(self) -> bool:
+        """
+        Collects login credentials and attempts to authenticate with the Bank.
+
+        Operates in two modes based on the state of `self._active_card`:
+        1. **Card-based:** If `self._active_card` is set, credentials (CPF, Branch, Account)
+           are extracted directly from the stored object.
+        2. **Manual:** If `self._active_card` is None, prompts the user to manually enter
+           their CPF, Branch Code, and Account Number.
+
+        Delegates validation to the Bank instance. If successful, the resulting
+        AuthToken is stored in `self._auth_token`.
+
+        Returns:
+            bool: True if authentication succeeded and a token was issued.
+                  False if authentication failed (invalid credentials).
+        """
+        match self._active_card:
+            case None:
+                user_inputs = config_loop(
+                    self._auth_config,
+                    self._controller_validator_cb,
+                    skip_fields=["card"],
+                )
+
+                client_cpf = _assert_input(user_inputs["cpf"], str)
+                branch_code = _assert_input(user_inputs["branch_code"], str)
+                account_num = _assert_input(user_inputs["account_num"], str)
+            case AccountCard():
+                client_cpf = self._active_card.client_cpf
+                branch_code = self._active_card.branch_code
+                account_num = self._active_card.account_num
+
+        self._auth_token = self._bank_instance.authenticate(
+            client_cpf, branch_code, account_num
+        )
+        if self._auth_token is not None:
+            return True
+        return False
+
+    def _select_card(self) -> None:
+        """
+        Interactively selects an account card and inserts it into the active slot.
+
+        Retrieves the client based on CPF input and displays a numbered menu of
+        available AccountCards.
+
+        Side Effects:
+            - On success: Sets `self._active_card` with the selected card object.
+            - On failure (empty list): Sets `self._active_card` to None.
+
+        Raises:
+            UserAbortError: Propagated if the user enters the exit command ('S').
+            ClientNotFoundError: If the provided CPF does not correspond to a registered client.
+        """
+
+        cpf = self._get_client_cpf()
+        client = self._bank_instance.get_client(cpf)
+        client_cards = client.cards
+
+        if not client_cards:
+            views.controller_output("card", None)
+            self._active_card = None
+            return
+
+        views.show_cards(client_cards)
+
+        def local_validator_cb(field: str, user_in_raw: InputType) -> CallbackReturn:
+            user_in = _assert_input(user_in_raw, int)
+            return {"result": 0 <= user_in < len(client_cards)}
+
+        card_idx_raw = get_single_input("card", config.auth_config, local_validator_cb)
+        card_idx = _assert_input(card_idx_raw, int)
+        self._active_card = client_cards[card_idx]
+
+    def _use_card_menu(self) -> bool:
+        """
+        Prompts the user to select the authentication strategy.
+
+        Returns:
+            bool: True if the user chooses 'Use Saved Card'.
+                  False if the user chooses 'Manual Input'.
+        """
+        use_card_mapper = {1: True, 2: False}
+
+        use_card_raw = get_single_input(
+            "use_card",
+            config.transaction_config,
+            self._controller_validator_cb,
+        )
+        use_card_int = _assert_input(use_card_raw, int)
+        use_card = use_card_mapper[use_card_int]
+
+        return use_card
+
+    def _login_loop(self) -> None:
+        """
+        Manages the authentication process, including strategy selection and retry logic.
+
+        Flow:
+        1. Prompts the user to choose the login method (Card vs. Manual).
+        2. Executes a loop (Max 3 attempts) to authenticate.
+        3. Handles 'Card Mode' with automatic fallback:
+           - If card selection is aborted or client not found, switches to Manual Mode.
+        4. Manages the `self._active_card` state.
+
+        Raises:
+            ControllerLoginError: If authentication fails after 3 attempts.
+            UserAbortError: If the user cancels the manual input process.
+        """
+        with_card = self._use_card_menu()
+
+        for attempt in range(3):
+            if with_card:
+                try:
+                    self._select_card()
+                except (UserAbortError, ClientNotFoundError):
+                    with_card = False
+                    self._active_card = None
+            authenticated = self._get_credentials()
+            if authenticated:
+                views.controller_output(mapper_key="auth", status_key=True)
+                return
+            if self._active_card:
+                views.controller_output("card", False)
+                self._active_card = None
+            if attempt < 2:
+                views.controller_output(mapper_key="auth", status_key=False)
+            match attempt:
+                case 1:
+                    views.controller_output(mapper_key="auth", status_key="1")
+                case 2:
+                    views.controller_output(mapper_key="auth", status_key="0")
+        self._active_card = None
+        raise ControllerLoginError("Maximum login attempts exceeded")
+
+    def _get_operation_context(self) -> OperationType:
+        """
+        Prompts the authenticated user to select a service from the main menu.
+
+        Returns:
+            OperationType: The selected high-level operation (Transaction,
+                           Unfreeze, or Close Account).
+        """
+        int_context = get_single_input(
+            "account_menu", config.initial_config, self._controller_validator_cb
+        )
+        operation_context = OperationType(int_context)
+        return operation_context
+
+    def _run_transaction(self) -> None:
+        """
+        Delegates control to the TransactionController for financial operations.
+
+        Injects the current session token (`_active_token`) and Bank instance
+        into the sub-controller. This method blocks until the transaction
+        session is finished (user logs out or cancels).
+        """
+
+        controller_obj = TransactionController(
+            self._bank_instance,
+            self._active_token,
+            config.transaction_config,
+        )
+        return controller_obj.run_controller()
+
+    def _unfreeze_account(self) -> None:
+        """
+        Orchestrates the account reactivation workflow for locked accounts.
+
+        Flow:
+        1. Identification: Uses the active session token (valid even for frozen accounts).
+        2. Security Challenge (KBA): Prompts for Name and Birth Date validation.
+        3. Credential Reset: Prompts for a new password.
+        4. Execution: Calls Bank service to unfreeze and update credentials.
+        5. Feedback: Displays success or specific error messages.
+        """
+        name_and_birth = config_loop(
+            config.identification_config,
+            self._controller_validator_cb,
+            skip_fields=["cpf"],
+        )
+
+        name = _assert_input(name_and_birth["name"], str)
+        birth_date = _assert_input(name_and_birth["birth_date"], str)
+        new_password = self._get_password()
+
+        try:
+            success = self._bank_instance.unfreeze_account(
+                self._active_token, name, birth_date, new_password
+            )
+
+            if success:
+                views.controller_output("unfreeze", True)
+            else:
+                views.controller_output("unfreeze", False)
+
+        except BankPasswordError:
+            views.controller_output("unfreeze", False)
+            views.controller_output("unfreeze", "password")
+
+    def _close_account(self) -> None:
+        """
+        Orchestrates the permanent account closure workflow.
+
+        Performs a secure teardown of the user's account, ensuring all liabilities
+        or assets are resolved before deletion.
+
+        Flow:
+        1. Re-authentication: Prompts for password to confirm identity.
+        2. Validation: Checks if the account balance is zero (Guard Clause).
+        3. Execution: Calls the Bank service to permanently remove account data.
+        4. Session Cleanup: Invalidates the current session token (`_auth_token`)
+           upon success, effectively logging the user out to prevent zombie sessions.
+
+        Raises:
+            ControllerOperationError: If the user aborts the operation during
+                                      password confirmation.
+        """
+        try:
+            password = self._get_password()
+            account = self._bank_instance.get_account(self._active_token, password)
+            views.controller_output("access", True)
+        except AccountNotFoundError:
+            views.controller_output("access", False)
+            return
+        except UserAbortError:
+            raise ControllerOperationError("Operation canceled by user")
+
+        if account.balance != 0:
+            views.show_close_account_status(account.balance)
+            return
+
+        try:
+            self._bank_instance.close_account(self._active_token, password)
+            views.show_close_account_status(account.balance)
+
+            self._auth_token = None
+        except NotEmptyAccountError:
+            views.show_close_account_status(account.balance)
+
+    def _register_orchestrator(self, client: RegisterOptions) -> None:
+        """
+        Routes the registration workflow based on the user's initial choice.
+
+        Acts as an adapter layer, defining specific callback functions for
+        New Client vs. New Account scenarios to fit the generic signature
+        required by `_try_register_loop`.
+
+        Args:
+            client (RegisterOptions): Tuple containing the user's intent.
+
+        Raises:
+            ControllerRegisterError: If the user aborts the process (types 'S').
+            RuntimeError: If the RegisterOptions state is invalid.
+        """
+        try:
+            if not client.registered:
+
+                def new_client_adapter(cli: Client, acc: Account, pwd: str) -> None:
+                    self._bank_instance.agg_new_client(
+                        new_client=cli, new_account=acc, password=pwd
+                    )
+
+                self._try_register_loop(
+                    self._create_client, new_client_adapter, "new_client"
+                )
+            elif client.registered and client.new_account:
+
+                def new_account_adapter(cli: str, acc: Account, pwd: str):
+                    self._bank_instance.agg_new_account(
+                        client_cpf=cli, new_account=acc, password=pwd
+                    )
+
+                self._try_register_loop(
+                    self._get_client_cpf, new_account_adapter, "new_account"
+                )
+            else:
+                raise RuntimeError(
+                    "Invalid RegisterOptions tuple state. "
+                    "A registered client cannot be registered again with a registered account."
+                )
+        except UserAbortError as e:
+            raise ControllerRegisterError(
+                "The registration process was interrupted by the user"
+            ) from e
+
+    def _session(self, operation: OperationType) -> None:
+        """
+        Executes the provided operation.
+
+        This method acts as a dispatcher, routing the flow to the specific handler
+        based on the `operation` argument.
+
+        Pre-condition:
+            It assumes a valid session exists (checked by the property `_active_token`
+            access within sub-methods). If called without a session, it will crash
+            with a RuntimeError (Design by Contract).
+
+        Flow:
+        1. Execution: Routes the flow to the specific handler (Transaction, Unfreeze, Close).
+        2. Error Translation: Catches low-level errors (e.g., BlockedAccount) and
+           converts them into `ControllerOperationError` for the main loop.
+
+        Args:
+            operation (OperationType): The specific banking operation selected by
+                                       the user in the main controller loop.
+
+        Raises:
+            ControllerOperationError: If the operation is blocked (BlockedAccountError)
+                                      or manually aborted (UserAbortError) during execution.
+            RuntimeError: If called when no user is logged in (via `_active_token`).
+        """
+        try:
+            match operation:
+                case OperationType.TRANSACTION:
+                    self._run_transaction()
+                case OperationType.UNFREEZE:
+                    self._unfreeze_account()
+                case OperationType.CLOSE:
+                    self._close_account()
+        except BlockedAccountError as e:
+            views.controller_output("access", "0")
+            raise ControllerOperationError from e
+        except UserAbortError:
+            raise ControllerOperationError
+
+    def run_controller(self) -> None:
+        """
+        Main application lifecycle orchestrator.
+
+        Manages the high-level flow of the application using a nested loop architecture:
+        1. Global Loop: Handles User Identification (Login vs. Register) and app exit.
+        2. Session Loop: Handles the repetitive execution of banking operations while logged in.
+
+        Exit Strategy:
+            - Catches 'UserAbortError' or 'ControllerRegisterError' in the outer loop
+              to correctly terminate the controller execution and return to main.py.
+        """
+        while True:
+            try:
+                client = self._get_initial_options()
+                if not client.registered or client.new_account:
+                    self._register_orchestrator(client)
+            except (UserAbortError, ControllerRegisterError):
+                views.controller_output("general", "exit")
+                return
+            while True:
+                try:
+                    if self._auth_token is None:
+                        self._login_loop()
+
+                    operation = self._get_operation_context()
+                    self._session(operation)
+                except UserAbortError:
+                    self._auth_token = None
+                    self._active_card = None
+                    views.controller_output("general", "exit")
+                    break
+                except ControllerLoginError:
+                    self._auth_token = None
+                    self._active_card = None
+                    views.controller_output("general", "exit")
+                    break
+                except ControllerOperationError:
+                    views.controller_output("general", "cancel")
+                    continue
