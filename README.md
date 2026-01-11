@@ -35,3 +35,52 @@ BankSystem/
 │   ├── exceptions.py   # Taxonomia de Erros Hierárquica
 │   └── types.py        # Enums Semânticos e Contextos
 └── main.py             # Composition Root & Entrypoint
+
+Patterns Implementados
+Generic Controllers: Uso de TypeVar e Generic[T] para criar controladores de criação (CreationController) que funcionam para qualquer entidade.
+
+Strategy Pattern: Utilizado na seleção de algoritmos de validação e nos fluxos de operação (Saque, Depósito, Extrato).
+
+State Pattern: Gestão do ciclo de vida da sessão (Logged In, Logged Out, Card Inserted).
+
+Aggregate Root: A classe Bank garante a consistência de todas as operações entre Clientes e Contas.
+
+Fail Fast & Exception Mapping: Um sistema sofisticado que traduz exceções técnicas (ex: ValueError) em contextos de negócio (ex: BankContext.PASSWORD), permitindo que a UI solicite correções específicas ao usuário.
+
+🛡️ Destaques de Segurança
+Anti-Enumeration: O login falha de forma genérica ou silenciosa em casos específicos para impedir que atacantes descubram quais CPFs estão cadastrados.
+
+Token-Based Access: O sistema utiliza AuthToken imutável. Os controladores não acessam contas diretamente, eles trocam tokens por acesso a cada operação.
+
+Zombie Session Prevention: O controlador principal garante a destruição do token e a ejeção do "cartão" da memória em caso de erros críticos ou logout forçado.
+
+Input Sanitization: Camada de verify.py e validators.py garante que dados sujos nunca cheguem às entidades de domínio.
+
+🚀 Como Executar
+Pré-requisitos
+Python 3.12 ou superior.
+
+Passo a Passo
+Clone o repositório:
+
+Bash
+
+git clone [https://github.com/Joziel-Freitas/bank-system-python.git](https://github.com/Joziel-Freitas/bank-system-python.git)
+cd bank-system-python
+Execute a aplicação (nenhuma instalação de biblioteca externa necessária):
+
+Bash
+
+python main.py
+💻 Exemplo de Uso
+O sistema simula um terminal de autoatendimento:
+
+Escolha o Banco: Selecione entre as opções de bancos disponíveis (cada um com seu código de agência).
+
+Identificação: Faça login com Cartão Virtual (selecionando da lista) ou Digitação Manual.
+
+Operações: Realize saques (com lógica de Cheque Especial), depósitos e visualize extratos.
+
+Admin: Desbloqueie contas congeladas respondendo a desafios de segurança (KBA - Knowledge Based Authentication).
+
+Autor: Joziel Freitas Projeto desenvolvido com foco em Excelência Técnica e Arquitetura de Software.
