@@ -137,7 +137,7 @@ class BaseController(ABC, Generic[T, R]):
         raise NotImplementedError()
 
 
-class CreationController(BaseController[CreatableT, CreatableT | None]):
+class CreationController(BaseController[CreatableT, CreatableT]):
     """
     Controller responsible for the instantiation workflow of new entities.
 
