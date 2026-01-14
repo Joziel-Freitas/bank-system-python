@@ -57,26 +57,22 @@ State: Gerenciamento do estado da sessão do usuário (ex: impedir saques se nã
 Template Method: Estrutura base para diferentes tipos de contas bancárias.
 
 Robustez e Validação (Fail-Fast)
-O sistema implementa uma camada de validação (validators.py e verify.py) que garante que dados incorretos sejam barrados antes de serem processados pelas regras de negócio. Erros técnicos são capturados e traduzidos em mensagens amigáveis para o usuário.
+O sistema implementa uma camada de validação (validators.py e verify.py) que garante
+que dados incorretos sejam barrados antes de serem processados pelas regras de negócio.
+Erros técnicos são capturados e traduzidos em mensagens amigáveis para o usuário.
 
 🚀 Como Executar
 Pré-requisitos: Python 3.12 ou superior.
 
 Clone o repositório:
+git clone https://github.com/Joziel-Freitas/bank-system-python.git
 
-```Bash
-
-git clone [https://github.com/Joziel-Freitas/bank-system-python.git](https://github.com/Joziel-Freitas/bank-system-python.git)
 Entre na pasta do projeto:
-
-```Bash
-
 cd bank-system-python
+
 Execute a aplicação (não requer instalação de bibliotecas externas):
-
-```Bash
-
 python main.py
+
 💻 Funcionalidades
 O sistema simula um terminal de autoatendimento com as seguintes opções:
 
