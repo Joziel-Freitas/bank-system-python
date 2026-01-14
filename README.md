@@ -64,17 +64,17 @@ Pré-requisitos: Python 3.12 ou superior.
 
 Clone o repositório:
 
-Bash
+```Bash
 
 git clone [https://github.com/Joziel-Freitas/bank-system-python.git](https://github.com/Joziel-Freitas/bank-system-python.git)
 Entre na pasta do projeto:
 
-Bash
+```Bash
 
 cd bank-system-python
 Execute a aplicação (não requer instalação de bibliotecas externas):
 
-Bash
+```Bash
 
 python main.py
 💻 Funcionalidades
