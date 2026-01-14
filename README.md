@@ -88,4 +88,5 @@ Consultas: Visualização de saldo e extrato detalhado.
 
 Admin: Funcionalidades de desbloqueio de conta mediante validação de segurança.
 
-Autor: Joziel Freitas Projeto desenvolvido com foco em Clean Code e Lógica de Programação.
+Autor: Joziel Freitas
+Projeto desenvolvido com foco em Clean Code e Lógica de Programação.
