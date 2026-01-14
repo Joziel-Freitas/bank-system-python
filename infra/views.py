@@ -16,7 +16,7 @@ from domain.person import AccountCard
 def welcome() -> None:
     """Displays the application's startup banner and initial instructions."""
     system("cls")
-    print("*" * 10, "Sistema Banco Python", "*" * 10)
+    print("*" * 10, "PyBank System", "*" * 10)
     print()
     print(f"{'Escolha o banco de sua preferência': ^43}")
     print("-" * 43)
@@ -24,7 +24,7 @@ def welcome() -> None:
 
 def bye() -> None:
     """Displays the system shutdown message and exit banner."""
-    print("*" * 10, "Sistema Banco Python", "*" * 10)
+    print("*" * 10, "PyBank System", "*" * 10)
     print()
     print("Saindo do sistema", end="")
     for i in range(3):
