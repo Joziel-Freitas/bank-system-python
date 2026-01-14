@@ -7,7 +7,7 @@ based on configuration maps. It is agnostic to domain rules.
 """
 
 from decimal import Decimal, InvalidOperation
-from typing import Callable, Optional, Type, TypedDict
+from typing import Callable, Type, TypedDict
 
 from shared.exceptions import UserAbortError
 from shared.validators import ValidatorCallback
@@ -137,7 +137,7 @@ def get_user_input(field_config: InnerConfig) -> InputType:
 def config_loop(
     config_map: ConfigMap,
     callback_fn: Callable[[str, InputType], CallbackReturn],
-    skip_fields: Optional[list[str | None]] = None,
+    skip_fields: list[str | None] | None = None,
 ) -> dict[str, InputType]:
     """
     Iterates over a configuration dictionary, collecting and validating data using a contextual callback.
