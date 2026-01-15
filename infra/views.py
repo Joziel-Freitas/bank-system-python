@@ -70,6 +70,7 @@ method_mappers = {
     "unfreeze": {
         True: "Conta desbloqueada com sucesso",
         False: "Falha no desbloqueio da conta",
+        "already_active": "Essa conta está desbloqueada. Impossível desbloquear",
         "password": "Essa senha já está cadastrada. A senha deve ser única",
     },
     "card": {

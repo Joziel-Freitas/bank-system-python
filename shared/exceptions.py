@@ -120,6 +120,12 @@ class NotEmptyAccountError(BankMethodError):
     """Raised when attempting to close an account with a non-zero balance."""
 
 
+class AccountAlreadyActiveError(BankMethodError):
+    """Raised when trying to unfreeze an account that is fully operational."""
+
+    pass
+
+
 # --- Entity Layer Exceptions (Person/Client) ---
 
 

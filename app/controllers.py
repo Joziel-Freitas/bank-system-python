@@ -18,6 +18,7 @@ from shared.exceptions import (
     ACCOUNT_ERROR_MAP,
     BANK_ERROR_MAP,
     PERSON_ERROR_MAP,
+    AccountAlreadyActiveError,
     AccountNotFoundError,
     BankMethodError,
     BankPasswordError,
@@ -929,8 +930,8 @@ class BankSystemController(BaseController[Bank, None]):
         1. Identification: Uses the active session token (valid even for frozen accounts).
         2. Security Challenge (KBA): Prompts for Name and Birth Date validation.
         3. Credential Reset: Prompts for a new password.
-        4. Execution: Calls Bank service to unfreeze and update credentials.
-        5. Feedback: Displays success or specific error messages.
+        4. Execution: Attempts to unfreeze via Bank service.
+        5. Feedback: Handles success, data mismatch, or redundant attempts (already active).
         """
         name_and_birth = config_loop(
             config.identification_config,
@@ -951,7 +952,8 @@ class BankSystemController(BaseController[Bank, None]):
                 views.controller_output("unfreeze", True)
             else:
                 views.controller_output("unfreeze", False)
-
+        except AccountAlreadyActiveError:
+            views.controller_output("unfreeze", "already_active")
         except BankPasswordError:
             views.controller_output("unfreeze", False)
             views.controller_output("unfreeze", "password")

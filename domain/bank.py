@@ -16,6 +16,7 @@ from typing import NamedTuple
 
 from infra import verify
 from shared.exceptions import (
+    AccountAlreadyActiveError,
     AccountNotFoundError,
     BankPasswordError,
     BankSecurityError,
@@ -524,6 +525,9 @@ class Bank:
         Identity (Name and Birth Date) before allowing the password reset and
         account reactivation.
 
+        It applies a 'Fail-Fast' check to ensure the account is actually
+        frozen before processing any validation logic.
+
         Args:
             token (AuthToken): The active session token.
             client_name (str): The name provided for verification.
@@ -533,7 +537,17 @@ class Bank:
         Returns:
             bool: True if verification succeeds and account is unlocked.
                   False if Name or Birth Date do not match records.
+
+        Raises:
+            AccountAlreadyActiveError: If the account is fully operational (not frozen).
+            BankPasswordError: If the new password format is invalid.
         """
+        account_key = (token.branch_code, token.account_num)
+        account_obj = self._bank_accounts[account_key]
+
+        if account_obj.is_active:
+            raise AccountAlreadyActiveError("Account is already active.")
+
         name = Person.validate_name(client_name)
         date = Person.validate_birth_date(birth_date)
         Bank.validate_password(new_password)
@@ -543,11 +557,8 @@ class Bank:
         if (name, date) != (client_obj.name, client_obj.birth_date):
             return False
 
-        account_key = (token.branch_code, token.account_num)
-
         self._reset_password(token.client_cpf, account_key, new_password)
 
-        account_obj = self._bank_accounts[account_key]
         account_obj.unfreeze()
         self._access_attempts[token.client_cpf] = 0
 
