@@ -7,7 +7,7 @@ based on configuration maps. It is agnostic to domain rules.
 """
 
 from decimal import Decimal, InvalidOperation
-from typing import Callable, Type, TypedDict
+from typing import Callable, NotRequired, Type, TypedDict
 
 from shared.exceptions import UserAbortError
 from shared.validators import ValidatorCallback
@@ -15,23 +15,20 @@ from shared.validators import ValidatorCallback
 from .config import ConfigMap, InnerConfig
 
 
-class BaseReturn(TypedDict):
-    """Base structure for callback return dictionaries."""
-
-    result: bool
-
-
-class CallbackReturn(BaseReturn, total=False):
+class CallbackReturn(TypedDict):
     """
     Return structure for validation callbacks.
 
     Attributes:
-        result (bool): True if input is valid, False otherwise.
-        skip_fields (tuple[str | None]): Fields to skip in the current loop.
-            If (None,) is present, the loop terminates immediately.
+        result (bool):
+            True if input is valid, False otherwise.
+        skip_fields (tuple[str | None], optional):
+            Fields to skip in the current loop.
+            - If the tuple contains None, the loop terminates immediately.
     """
 
-    skip_fields: tuple[str | None]
+    result: bool
+    skip_fields: NotRequired[tuple[str | None]]
 
 
 type InputType = str | int | float | Decimal
