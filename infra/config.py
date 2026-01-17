@@ -68,7 +68,7 @@ identification_config: ConfigMap = {
         "info": "Identificação - CPF",
         "prompt": "Informe o CPF (somente números): ",
         "value_type": str,
-        "error_msg": "CPF inválido. O CPF deve conter somente dígitos e ter exatamente 11 dígitos",
+        "error_msg": "CPF inválido. O CPF deve conter somente números e ter exatamente 11 dígitos",
     },
 }
 
@@ -101,7 +101,7 @@ new_account_config: ConfigMap = {
         "info": "Conta - Saldo inicial",
         "prompt": "Informe um valor inicial para o saldo da conta: ",
         "value_type": Decimal,
-        "error_msg": "Valor inválido. O saldo deve ser um valor não negativo",
+        "error_msg": "Valor inválido. O saldo deve ser um número real não negativo",
     },
 }
 
@@ -165,7 +165,7 @@ transaction_config: ConfigMap = {
     },
     "limit": {
         "info": "Transação - Cheque Especial",
-        "prompt": "Deseja usar o cheque especial? 1 - Sim\n2 - Não\nSua opção: ",
+        "prompt": "Deseja usar o cheque especial?\n1 - Sim\n2 - Não\nSua opção: ",
         "value_type": int,
         "error_msg": "Opção inválida. Escolha entre as opções 1 ou 2",
     },
