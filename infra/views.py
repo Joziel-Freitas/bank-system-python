@@ -125,9 +125,9 @@ def show_statement(
             Defaults to None.
     """
     system("cls")
-    print("\n" + "=" * 40)
-    print(f"{'EXTRATO BANCÁRIO':^40}")
-    print("=" * 40 + "\n")
+    print("\n" + "=" * 45)
+    print(f"{'EXTRATO BANCÁRIO':^45}")
+    print("=" * 45 + "\n")
 
     if not transactions:
         print("Nenhuma movimentação registrada")
@@ -137,15 +137,15 @@ def show_statement(
         print(f"{i:02d} {label:.<25} R$ {value:>10.2f}")
 
     print("\n" * 2)
-    print(f"{'Saldo Atual':.<25} R$ {balance:>10.2f}")
+    print(f"{'Saldo Atual':.<28} R$ {balance:>10.2f}")
 
     if overdraft_info:
         limit = overdraft_info["total_limit"]
         remaining = overdraft_info["remaining"]
-        print(f" Limite Cheque Especial: R$ {limit:10.2f}")
+        print(f"{'Limite Cheque Especial':.<28} R$ {limit:>10.2f}")
 
         if remaining < limit:
-            print(f" Limite Disponível:  R$ {remaining:10.2f}")
+            print(f"{'Limite Disponível':.<28} R$ {remaining:>10.2f}")
 
     for i in range(5):
         print(".", end=" ")
