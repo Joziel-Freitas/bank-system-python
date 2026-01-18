@@ -434,32 +434,76 @@ class TransactionController(BaseController[Account, None]):
             return use_limit
         raise RuntimeError(f"Invalid withdraw state: {info}")
 
+    def _handle_statement(self) -> None:
+        """
+        Retrieves account data and orchestrates the statement display.
+
+        It checks the specific type of the active account. If it is a CheckingAccount,
+        it gathers additional overdraft limit information (total and remaining)
+        to provide a complete financial overview in the view.
+        """
+        statement = self._active_account.get_statement
+        balance = self._active_account.balance
+        overdraft_info = None
+
+        if isinstance(self._active_account, CheckingAccount):
+            overdraft_info = {
+                "total_limit": self._active_account.CREDIT_LIMIT,
+                "remaining": self._active_account.remaining_credit,
+            }
+        views.show_statement(statement, balance, overdraft_info)
+
+    def _handle_withdraw(self) -> None:
+        """
+        Orchestrates the withdrawal workflow.
+
+        Flow:
+        1. Prompts for the withdrawal amount.
+        2. Validates authorization via `_authorize_withdraw` (checks balance and
+           prompts user confirmation if overdraft is needed).
+        3. Executes the withdrawal and shows success feedback if authorized.
+        4. Displays a cancellation message if the user aborts the process.
+        """
+        value = self._get_operation_value(TransactionType.WITHDRAW)
+        if self._authorize_withdraw(value):
+            self._active_account.withdraw(value)
+            views.controller_output("transaction", True)
+            return
+
+        views.controller_output("general", "cancel")
+
+    def _handle_deposit(self) -> None:
+        """
+        Orchestrates the deposit workflow.
+
+        Prompts the user for the deposit amount, updates the account balance,
+        and triggers the success feedback view.
+        """
+        value = self._get_operation_value(TransactionType.DEPOSIT)
+        self._active_account.deposit(value)
+        views.controller_output("transaction", True)
+
     def _operation_flow(self) -> None:
         """
-        Executes the selected banking operation (Strategy Pattern via Match).
+        Acts as the central dispatcher for banking operations.
 
-        Handles Statement, Withdraw (with authorization), and Deposit.
+        Identifies the requested transaction type and delegates the execution
+        to the specific handler method (`_handle_statement`, `_handle_withdraw`,
+        or `_handle_deposit`).
 
         Raises:
-            UserAbortError: If user cancels a withdrawal that requires limit confirmation.
+            UserAbortError: If the user cancels the operation selection or input.
             RuntimeError: If an unknown transaction type is encountered.
         """
-        operation: TransactionType = self._get_transaction_type()
+        operation_type: TransactionType = self._get_transaction_type()
 
-        match operation:
+        match operation_type:
             case TransactionType.STATEMENT:
-                statement = self._active_account.get_statement
-                balance = self._active_account.balance
-                views.show_statement(statement, balance)
+                self._handle_statement()
             case TransactionType.WITHDRAW:
-                value = self._get_operation_value(operation)
-                if self._authorize_withdraw(value):
-                    self._active_account.withdraw(value)
-                    views.controller_output("transaction", True)
+                self._handle_withdraw()
             case TransactionType.DEPOSIT:
-                value = self._get_operation_value(operation)
-                self._active_account.deposit(value)
-                views.controller_output("transaction", True)
+                self._handle_deposit()
             case _:
                 raise RuntimeError("Unexpected controller error")
 

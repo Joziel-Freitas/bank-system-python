@@ -102,7 +102,11 @@ def controller_output(mapper_key: str, status_key: str | bool | None) -> None:
         sleep(0.85)
 
 
-def show_statement(transactions: list[Decimal], balance: Decimal) -> None:
+def show_statement(
+    transactions: list[Decimal],
+    balance: Decimal,
+    overdraft_info: dict[str, Decimal] | None = None,
+) -> None:
     """
     Renders the account bank statement to the terminal.
 
@@ -110,21 +114,39 @@ def show_statement(transactions: list[Decimal], balance: Decimal) -> None:
     a readable report. Calculates appropriate labels (Deposit/Withdraw) based
     on the sign of the value.
 
+    If `overdraft_info` is provided (typically for Checking Accounts), it
+    appends the credit limit status to the footer.
+
     Args:
         transactions (list[Decimal]): List of transaction values.
         balance (Decimal): The final calculated balance.
+        overdraft_info (dict[str, Decimal] | None, optional): A dictionary containing
+            'total_limit' and 'remaining' keys to display overdraft details.
+            Defaults to None.
     """
     system("cls")
-    print("*" * 15, "EXTRATO", "*" * 15)
+    print("\n" + "=" * 40)
+    print(f"{'EXTRATO BANCÁRIO':^40}")
+    print("=" * 40 + "\n")
+
     if not transactions:
         print("Nenhuma movimentação registrada")
 
-    for value in transactions:
+    for i, value in enumerate(transactions, 1):
         label = "Saque" if value < 0 else "Depósito"
-        print(f"{label:.<25} R$ {value:>10.2f}")
+        print(f"{i:02d} {label:.<25} R$ {value:>10.2f}")
 
     print("\n" * 2)
     print(f"{'Saldo Atual':.<25} R$ {balance:>10.2f}")
+
+    if overdraft_info:
+        limit = overdraft_info["total_limit"]
+        remaining = overdraft_info["remaining"]
+        print(f" Limite Cheque Especial: R$ {limit:10.2f}")
+
+        if remaining < limit:
+            print(f" Limite Disponível:  R$ {remaining:10.2f}")
+
     for i in range(5):
         print(".", end=" ")
         sleep(1)
