@@ -7,9 +7,11 @@ attribute validation, core banking operations (deposit and withdraw), and
 transaction history tracking.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from decimal import Decimal
-from typing import ClassVar, NamedTuple
+from typing import Any, ClassVar, NamedTuple, cast
 
 from infra import verify
 from shared.exceptions import (
@@ -274,6 +276,73 @@ class Account(ABC):
         except verify.VERIFY_ERRORS as e:
             raise InvalidWithdrawError(f"Invalid withdraw value: Cause: {e}") from e
 
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Serializes the account state into a dictionary compatible with JSON.
+
+        Converts rich types like Decimal into strings to ensure serialization safety.
+        Includes a 'type' field (e.g., 'CheckingAccount') to allow the Factory method
+        to reconstruct the correct concrete class implementation upon deserialization.
+
+        Returns:
+            dict: The dictionary containing branch, account number, balance,
+                  transaction history, status, and class type.
+        """
+        return {
+            "branch_code": self._branch_code,
+            "account_num": self._account_num,
+            "balance": str(self._balance),
+            "transactions": [str(t) for t in self._transactions],
+            "is_active": self._is_active,
+            "type": type(self).__name__,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Account:
+        """
+        Factory method to reconstruct an Account instance (or subclass) from a dictionary.
+
+        Implements a Dispatcher Pattern:
+        1. If called on the base Account class, it inspects the 'type' field in the data
+           and delegates instantiation to the correct subclass (Checking or Savings).
+        2. If called on (or dispatched to) a subclass, it restores the common attributes
+           (balance, transactions, status) and returns the hydrated instance.
+
+        Args:
+            data (dict): The dictionary containing raw account data.
+
+        Returns:
+            Account: A fully initialized instance of the specific Account subclass.
+
+        Raises:
+            ValueError: If the 'type' field in the data is unknown or missing.
+        """
+        if cls is Account:
+            obj_type = data.get("type")
+
+            if obj_type:
+                account_types = {
+                    "CheckingAccount": CheckingAccount,
+                    "SavingsAccount": SavingsAccount,
+                }
+
+                target_class = account_types.get(obj_type)
+
+                if target_class:
+                    return target_class.from_dict(data)
+            raise ValueError(f"Unknown account type: {obj_type}")
+
+        instance = cls(
+            branch_code=data["branch_code"],
+            account_num=data["account_num"],
+            balance=Decimal(data["balance"]),
+        )
+
+        instance._transactions = [Decimal(t) for t in data["transactions"]]
+        instance._is_active = data["is_active"]
+
+        return instance
+
     def deposit(self, value: Decimal) -> None:
         """
         Performs a standard deposit operation.
@@ -384,6 +453,42 @@ class CheckingAccount(Account):
     def remaining_credit(self) -> Decimal:
         """Returns the remaining credit (CREDIT_LIMIT minus used credit)."""
         return CheckingAccount.CREDIT_LIMIT - self._used_credit
+
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Serializes the CheckingAccount, extending the base serialization.
+
+        Adds specific credit attributes (`CREDIT_LIMIT` and `used_credit`) to the
+        dictionary. Note that `CREDIT_LIMIT` is strictly informational, as the
+        value is defined as a class constant.
+
+        Returns:
+            dict: The complete dictionary with base account data plus credit info.
+        """
+        obj_data = super().to_dict()
+        obj_data["CREDIT_LIMIT"] = str(CheckingAccount.CREDIT_LIMIT)
+        obj_data["used_credit"] = str(self._used_credit)
+
+        return obj_data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CheckingAccount:
+        """
+        Reconstructs a CheckingAccount instance.
+
+        Delegates the core hydration to the parent class and then populates the
+        specific `_used_credit` attribute.
+
+        Args:
+            data (dict): The dictionary containing account data.
+
+        Returns:
+            CheckingAccount: The restored instance with the correct credit usage state.
+        """
+        instance = cast(CheckingAccount, super().from_dict(data))
+        instance._used_credit = Decimal(data["used_credit"])
+
+        return instance
 
     def deposit(self, value: Decimal) -> None:
         """

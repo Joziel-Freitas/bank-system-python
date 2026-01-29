@@ -16,7 +16,7 @@ from domain.person import AccountCard
 def welcome() -> None:
     """Displays the application's startup banner and initial instructions."""
     system("cls")
-    print("*" * 10, "PyBank System", "*" * 10)
+    print(f"{' PyBank System ':*^43}")
     print()
     print(f"{'Escolha o banco de sua preferência': ^43}")
     print("-" * 43)
@@ -24,6 +24,7 @@ def welcome() -> None:
 
 def bye() -> None:
     """Displays the system shutdown message and exit banner."""
+    system("cls")
     print("*" * 10, "PyBank System", "*" * 10)
     print()
     print("Saindo do sistema", end="")
@@ -35,7 +36,7 @@ def bye() -> None:
 # Dictionary mapping internal status keys to user-friendly messages
 method_mappers = {
     "general": {
-        "exit": "Operação cancelada. Voltando ao menu anterior",
+        "exit": "Voltando ao menu anterior",
         "cancel": "Operação cancelada.",
     },
     "auth": {
@@ -100,6 +101,7 @@ def controller_output(mapper_key: str, status_key: str | bool | None) -> None:
     for i in range(3):
         print(".", end=" ")
         sleep(0.85)
+    print()
 
 
 def show_statement(
@@ -154,7 +156,7 @@ def show_statement(
 
 def show_cards(client_cards: list[AccountCard]) -> None:
     system("cls")
-    print("--- Seus Cartões ---")
+    print(f"{' Seus cartões ':-^50}")
     for idx, card in enumerate(client_cards):
         print(f"{idx}: {card}")
 

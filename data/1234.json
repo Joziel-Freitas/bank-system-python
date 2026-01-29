@@ -1,0 +1,47 @@
+{
+    "bank_name": "Banco do Dev S.A.",
+    "bank_branch_code": "1234",
+    "bank_clients": [
+        {
+            "name": "Joziel",
+            "birth_date": "1986-01-24",
+            "cpf": "04971586989",
+            "account_cards": [
+                {
+                    "client_cpf": "04971586989",
+                    "branch_code": "1234",
+                    "account_num": "12345678"
+                }
+            ]
+        }
+    ],
+    "bank_accounts": [
+        {
+            "branch_code": "1234",
+            "account_num": "12345678",
+            "balance": "4300.50",
+            "transactions": [
+                "500",
+                "500",
+                "1300.50",
+                "-3000",
+                "5000"
+            ],
+            "is_active": true,
+            "type": "CheckingAccount",
+            "CREDIT_LIMIT": "3000.00",
+            "used_credit": "0.00"
+        }
+    ],
+    "associated_clients": {
+        "04971586989": {
+            "123456": [
+                "1234",
+                "12345678"
+            ]
+        }
+    },
+    "access_attempts": {
+        "04971586989": 0
+    }
+}

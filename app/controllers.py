@@ -18,7 +18,6 @@ from shared.exceptions import (
     ACCOUNT_ERROR_MAP,
     BANK_ERROR_MAP,
     PERSON_ERROR_MAP,
-    AccountAlreadyActiveError,
     AccountNotFoundError,
     BankMethodError,
     BankPasswordError,
@@ -581,27 +580,40 @@ class BankSystemController(BaseController[Bank, None]):
     }
 
     _bank_instance: Bank
+    _repository: Any
     _auth_config: config.ConfigMap
     _system_config: config.ConfigMap
     _auth_token: AuthToken | None
     _active_card: AccountCard | None
 
-    def __init__(self, bank_instance: Bank):
+    def __init__(self, bank_instance: Bank, repository: Any):
         """
         Initializes the BankSystemController.
 
-        Sets up the connection to the Bank 'Model', loads system configurations,
-        and initializes the validator callbacks. The session state (_auth_token)
-        starts as None.
+        Sets up the connection to the Bank 'Model', validates the Persistence
+        Repository using Duck Typing, loads system configurations, and initializes
+        session state (Token/Card) as empty.
 
         Args:
-            bank_instance (Bank): The main banking system instance.
+            bank_instance (Bank): The main banking system instance (Model).
+            repository (Any): A Class or Object responsible for data persistence.
+                              Must implement 'save(bank)' and 'load(data)'.
+
+        Raises:
+            TypeError: If the bank_instance is not a Bank or if the repository
+                       does not fulfill the required interface contract.
         """
         super().__init__(Bank)
+
+        verify.verify_instance(bank_instance, Bank)
         self._bank_instance = bank_instance
+
+        BankSystemController._verify_repository(repository)
+        self._repository = repository
 
         _verify_config_map(config.initial_config)
         self._system_config = config.initial_config
+
         _verify_config_map(config.auth_config)
         self._auth_config = config.auth_config
 
@@ -642,6 +654,13 @@ class BankSystemController(BaseController[Bank, None]):
         if self._auth_token is None:
             raise RuntimeError("Property called out of order")
         return self._auth_token
+
+    @staticmethod
+    def _verify_repository(repository) -> None:
+        required_methods = ["save", "load"]
+
+        if not all(hasattr(repository, method) for method in required_methods):
+            raise TypeError(f"Invalid Repository. Must implement: {required_methods}")
 
     def _get_initial_options(self) -> RegisterOptions:
         """
@@ -970,12 +989,16 @@ class BankSystemController(BaseController[Bank, None]):
         """
         Orchestrates the account reactivation workflow for locked accounts.
 
+        Pre-condition:
+            Assumes the account is currently FROZEN. The caller (_session) is
+            responsible for verifying this state before invoking this method.
+
         Flow:
-        1. Identification: Uses the active session token (valid even for frozen accounts).
+        1. Identification: Uses the active session token.
         2. Security Challenge (KBA): Prompts for Name and Birth Date validation.
         3. Credential Reset: Prompts for a new password.
         4. Execution: Attempts to unfreeze via Bank service.
-        5. Feedback: Handles success, data mismatch, or redundant attempts (already active).
+        5. Feedback: Handles success (unlocked) or failure (data mismatch).
         """
         name_and_birth = config_loop(
             config.identification_config,
@@ -996,8 +1019,6 @@ class BankSystemController(BaseController[Bank, None]):
                 views.controller_output("unfreeze", True)
             else:
                 views.controller_output("unfreeze", False)
-        except AccountAlreadyActiveError:
-            views.controller_output("unfreeze", "already_active")
         except BankPasswordError:
             views.controller_output("unfreeze", False)
             views.controller_output("unfreeze", "password")
@@ -1046,15 +1067,18 @@ class BankSystemController(BaseController[Bank, None]):
         """
         Routes the registration workflow based on the user's initial choice.
 
-        Acts as an adapter layer, defining specific callback functions for
-        New Client vs. New Account scenarios to fit the generic signature
-        required by `_try_register_loop`.
+        Acts as an adapter layer, executing the specific registration logic
+        (New Client vs. New Account).
+
+        Note:
+            This method does NOT persist the changes to disk. The persistence layer
+            is invoked by the caller (run_controller) upon successful execution.
 
         Args:
             client (RegisterOptions): Tuple containing the user's intent.
 
         Raises:
-            ControllerRegisterError: If the user aborts the process (types 'S').
+            ControllerRegisterError: If the user aborts the process.
             RuntimeError: If the RegisterOptions state is invalid.
         """
         try:
@@ -1090,38 +1114,49 @@ class BankSystemController(BaseController[Bank, None]):
 
     def _session(self, operation: OperationType) -> None:
         """
-        Executes the provided operation.
+        Executes the provided operation with pre-emptive status checks.
 
-        This method acts as a dispatcher, routing the flow to the specific handler
-        based on the `operation` argument.
+        Dispatcher method that routes to specific handlers (Transaction, Unfreeze, Close).
+        It implements a 'Fail Fast' strategy:
+        1. Blocks standard operations if the account is frozen.
+        2. Blocks unfreeze attempts if the account is already active.
 
-        Pre-condition:
-            It assumes a valid session exists (checked by the property `_active_token`
-            access within sub-methods). If called without a session, it will crash
-            with a RuntimeError (Design by Contract).
-
-        Flow:
-        1. Execution: Routes the flow to the specific handler (Transaction, Unfreeze, Close).
-        2. Error Translation: Catches low-level errors (e.g., BlockedAccount) and
-           converts them into `ControllerOperationError` for the main loop.
+        Note:
+            This method does NOT persist the changes to disk. The persistence layer
+            is invoked by the caller (run_controller) upon successful execution.
 
         Args:
-            operation (OperationType): The specific banking operation selected by
-                                       the user in the main controller loop.
+            operation (OperationType): The operation selected by the user.
 
         Raises:
-            ControllerOperationError: If the operation is blocked (BlockedAccountError)
-                                      or manually aborted (UserAbortError) during execution.
-            RuntimeError: If called when no user is logged in (via `_active_token`).
+            ControllerOperationError: If the operation is blocked by status checks
+                                      or aborted by the user.
+            RuntimeError: If called without a session or with an invalid operation type.
         """
         try:
+            if (
+                operation != OperationType.UNFREEZE
+                and not self._bank_instance.is_account_active(self._active_token)
+            ):
+                views.controller_output("access", "0")
+                raise ControllerOperationError()
+
+            if (
+                operation == OperationType.UNFREEZE
+                and self._bank_instance.is_account_active(self._active_token)
+            ):
+                views.controller_output("unfreeze", "already_active")
+                raise ControllerOperationError()
+
             match operation:
                 case OperationType.TRANSACTION:
                     self._run_transaction()
-                case OperationType.UNFREEZE:
-                    self._unfreeze_account()
                 case OperationType.CLOSE:
                     self._close_account()
+                case OperationType.UNFREEZE:
+                    self._unfreeze_account()
+                case _:
+                    raise RuntimeError("Invalid type for operation type")
         except BlockedAccountError as e:
             views.controller_output("access", "0")
             raise ControllerOperationError from e
@@ -1132,9 +1167,14 @@ class BankSystemController(BaseController[Bank, None]):
         """
         Main application lifecycle orchestrator.
 
-        Manages the high-level flow of the application using a nested loop architecture:
-        1. Global Loop: Handles User Identification (Login vs. Register) and app exit.
-        2. Session Loop: Handles the repetitive execution of banking operations while logged in.
+        Manages the high-level flow of the application using a nested loop architecture
+        and acts as the 'Transaction Boundary' for data persistence.
+
+        Responsibilities:
+        1. Global Loop: Handles User Identification (Login vs. Register).
+        2. Session Loop: Handles banking operations while logged in.
+        3. Persistence: Triggers 'repository.save()' automatically after any
+           successful registration or financial operation (Write-Through).
 
         Exit Strategy:
             - Catches 'UserAbortError' or 'ControllerRegisterError' in the outer loop
@@ -1145,6 +1185,7 @@ class BankSystemController(BaseController[Bank, None]):
                 client = self._get_initial_options()
                 if not client.registered or client.new_account:
                     self._register_orchestrator(client)
+                    self._repository.save(self._bank_instance)
             except (UserAbortError, ControllerRegisterError):
                 views.controller_output("general", "exit")
                 return
@@ -1155,6 +1196,7 @@ class BankSystemController(BaseController[Bank, None]):
 
                     operation = self._get_operation_context()
                     self._session(operation)
+                    self._repository.save(self._bank_instance)
                 except UserAbortError:
                     self._auth_token = None
                     self._active_card = None

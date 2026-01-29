@@ -1,0 +1,41 @@
+{
+    "bank_name": "Banco do Analista S.A.",
+    "bank_branch_code": "4321",
+    "bank_clients": [
+        {
+            "name": "Josefa",
+            "birth_date": "1957-04-21",
+            "cpf": "47625635953",
+            "account_cards": [
+                {
+                    "client_cpf": "47625635953",
+                    "branch_code": "4321",
+                    "account_num": "87654321"
+                }
+            ]
+        }
+    ],
+    "bank_accounts": [
+        {
+            "branch_code": "4321",
+            "account_num": "87654321",
+            "balance": "1000",
+            "transactions": [
+                "1000"
+            ],
+            "is_active": true,
+            "type": "SavingsAccount"
+        }
+    ],
+    "associated_clients": {
+        "47625635953": {
+            "654321": [
+                "4321",
+                "87654321"
+            ]
+        }
+    },
+    "access_attempts": {
+        "47625635953": 0
+    }
+}

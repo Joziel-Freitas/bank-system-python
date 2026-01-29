@@ -12,7 +12,10 @@ properly linked to their accounts and that security credentials (passwords)
 are validated before access is granted.
 """
 
-from typing import NamedTuple
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, cast
 
 from infra import verify
 from shared.exceptions import (
@@ -31,7 +34,8 @@ from .account import Account
 from .person import AccountCard, Client, Person
 
 
-class AuthToken(NamedTuple):
+@dataclass(frozen=True)
+class AuthToken:
     """
     Represents a secure access token for stateless authentication.
 
@@ -183,6 +187,67 @@ class Bank:
             verify.verify_digits(password, 6)
         except verify.VERIFY_ERRORS as e:
             raise BankPasswordError(f"Invalid password. Cause: {e}")
+
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Serializes the Bank state into a dictionary compatible with JSON.
+
+        Implements a 'Flattening Strategy' for persistence:
+        1. Converts internal object registries (Clients/Accounts) into simple lists
+           to bypass JSON limitations regarding complex dictionary keys.
+        2. Preserves the logical relationships in '_associated_clients' while
+           allowing tuples to be implicitly converted to lists by the serializer.
+        """
+        return {
+            "bank_name": self._bank_name,
+            "bank_branch_code": self._bank_branch_code,
+            "bank_clients": [c.to_dict() for c in self._bank_clients.values()],
+            "bank_accounts": [acc.to_dict() for acc in self._bank_accounts.values()],
+            "associated_clients": self._associated_clients,
+            "access_attempts": self._access_attempts,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Bank:
+        """
+        Reconstructs the Bank instance from serialized data (Rehydration).
+
+        This method acts as a massive Builder/Factory that:
+        1. Deserializes lists back into fully functioning Client/Account objects.
+        2. Rebuilds the internal Hash Maps (dictionaries) for O(1) complexity access.
+        3. Restores the tuple-based keys in '_associated_clients' (handling the
+           List->Tuple conversion required after JSON loading).
+        4. Enforces 'Fail-Secure' by requiring the presence of security counters.
+        """
+        clients_list = [Client.from_dict(obj_json) for obj_json in data["bank_clients"]]
+        accounts_list = [
+            Account.from_dict(obj_json) for obj_json in data["bank_accounts"]
+        ]
+
+        associated_clients: dict[str, dict[str, list[str]]] = data["associated_clients"]
+
+        instance = cls(
+            bank_name=data["bank_name"], branch_code=data["bank_branch_code"]
+        )
+
+        for client in clients_list:
+            client_key = Bank._extract_client_key(client)
+            instance._bank_clients[client_key] = client
+
+        for account in accounts_list:
+            acc_key = Bank._extract_account_key(account)
+            instance._bank_accounts[acc_key] = account
+
+        for cpf, inner_dict in associated_clients.items():
+            instance._associated_clients[cpf] = {}
+            for pwd, list_key in inner_dict.items():
+                tuple_key_raw = tuple(list_key)
+                tuple_key = cast(tuple[str, str], tuple_key_raw)
+                instance._associated_clients[cpf][pwd] = tuple_key
+
+        instance._access_attempts = data["access_attempts"]
+
+        return instance
 
     def _validate_client(self, client: Client) -> None:
         """
@@ -360,6 +425,30 @@ class Bank:
             )
         return None
 
+    def is_account_active(self, token: AuthToken) -> bool:
+        """
+        Checks if the account associated with the token is operational.
+
+        Acts as a public boolean facade for the internal '_check_access' method.
+        It allows Controllers to perform 'Fail Fast' checks on the session status
+        without needing to handle exceptions for blocked accounts.
+
+        Args:
+            token (AuthToken): The session token.
+
+        Returns:
+            bool: True if the account is active.
+                  False if the account is frozen (BlockedAccountError is caught).
+
+        Raises:
+            BankSecurityError: If the token is invalid or corrupted (propagated).
+        """
+        try:
+            self._check_access(token)
+            return True
+        except BlockedAccountError:
+            return False
+
     def get_client(self, client_cpf: str) -> Client:
         """
         Retrieves the Client object associated with the provided CPF.
@@ -385,7 +474,7 @@ class Bank:
         """
         Retrieves the Account object associated with the client and password.
 
-        Delegates preliminary security checks to '_check_access()' and focuses
+        Delegates preliminary token integrity checks to '_check_access()' and focuses
         on password validation and access attempt monitoring. Handles account
         freezing logic upon repeated failed attempts.
 
@@ -397,10 +486,11 @@ class Bank:
             Account: The Account object if found and authorized.
 
         Raises:
-            BankSecurityError: If the token signature is invalid or a cross-access
-                attempt is detected.
+            BankSecurityError: If the token signature or integrity is invalid.
             BlockedAccountError: If the account is frozen due to security.
-            AccountNotFoundError: If the password does not match any account.
+            AccountNotFoundError: If the password is incorrect, or if the password
+                belongs to a different account than the one in the token (Cross-access
+                attempts are treated as 'Not Found' to prevent credential enumeration).
             RuntimeError: If internal data integrity is compromised.
         """
         self._check_access(token)
@@ -408,6 +498,9 @@ class Bank:
 
         client_accounts = self._associated_clients[token.client_cpf]
         account_key = client_accounts.get(password)
+
+        if account_key != (token.branch_code, token.account_num):
+            account_key = None
 
         self._access_attempts.setdefault(token.client_cpf, 0)
 
@@ -425,9 +518,6 @@ class Bank:
                 "No account associated to this password in _associated_clients."
             )
 
-        if account_key != (token.branch_code, token.account_num):
-            raise BankSecurityError("Cross-access attempt detected!")
-
         self._access_attempts[token.client_cpf] = 0
         account_obj = self._bank_accounts[account_key]
 
@@ -440,8 +530,9 @@ class Bank:
         Registers a new Client along with their first Account.
 
         This method performs an atomic registration operation: validation,
-        association, storage of both entities, and bidirectional linking.
-        Finally, it issues a 'Quick Access Card' and adds it to the client's wallet.
+        association, and storage of both entities in the bank's registry.
+        Finally, it issues a 'Quick Access Card' and adds it to the client's wallet,
+        allowing the client to reference this account in the future.
 
         Args:
             new_client (Client): The new client instance.
@@ -470,8 +561,6 @@ class Bank:
             branch_code=new_account.branch_code,
             account_num=new_account.account_num,
         )
-
-        new_client.add_account(new_account)
         new_client.add_card(new_card)
 
     def agg_new_account(
@@ -480,9 +569,10 @@ class Bank:
         """
         Adds a new Account to an existing Client.
 
-        Validates the client existence, registers the new account in the bank,
-        issues a new 'Quick Access Card', and updates the client's internal
-        list of accounts and cards.
+        Validates the client existence, registers the new account in the bank's
+        internal map, and associates it with the client via the password.
+        Finally, issues a new 'Quick Access Card' and adds it to the client's
+        wallet for easy access.
 
         Args:
             client_cpf (str): The CPF of the existing client.
@@ -512,7 +602,6 @@ class Bank:
             account_num=new_account.account_num,
         )
         client_obj = self.get_client(client_cpf)
-        client_obj.add_account(new_account)
         client_obj.add_card(new_card)
 
     def unfreeze_account(
@@ -569,29 +658,23 @@ class Bank:
         Permanently closes an account and removes all its system associations.
 
         This operation enforces strict business rules: the account must have a
-        balance of zero (no funds and no debts). It relies on `get_account`
-        to validate security credentials (Token + Password).
+        balance of zero. It validates credentials and removes the account from
+        the bank's registry.
 
-        Upon closure, the account is removed from the registry, and the
-        associated 'Quick Access Card' is automatically identified via the
-        session token and removed from the client's wallet.
-
-        If the closed account is the last one associated with the client,
-        the client entity is also removed from the bank's registry to maintain
-        data consistency.
+        Additionally, it identifies and destroys the specific 'Quick Access Card'
+        associated with this account from the client's wallet. If this was the
+        client's last link to the bank, the client entity is also removed.
 
         Args:
-            token (AuthToken): The active session token identifying the account owner.
-            password (str): The password linked to the account (required for confirmation).
+            token (AuthToken): The active session token.
+            password (str): The password linked to the account.
 
         Raises:
-            NotEmptyAccountError: If the account has a positive balance or negative debt.
+            NotEmptyAccountError: If the account has a non-zero balance.
             BankSecurityError: If the token is invalid.
-            BlockedAccountError: If the account is currently frozen.
-            AccountNotFoundError: If the password is incorrect.
-            ClientNotFoundError: If the client data is corrupted.
+            BlockedAccountError: If the account is frozen.
+            AccountNotFoundError: If credentials do not match.
         """
-
         account_obj = self.get_account(token, password)
         account_key = (token.branch_code, token.account_num)
 
@@ -603,7 +686,6 @@ class Bank:
         client_obj = self.get_client(token.client_cpf)
         client_accounts = self._associated_clients[token.client_cpf]
 
-        client_obj.remove_account(account_obj)
         for card in client_obj.cards:
             if (card.client_cpf, card.branch_code, card.account_num) == (
                 token.client_cpf,

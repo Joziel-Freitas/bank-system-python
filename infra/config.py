@@ -62,7 +62,7 @@ identification_config: ConfigMap = {
         "info": "Identificação - Data de nascimento",
         "prompt": "Informe sua data de nascimento (dd/mm/aaaa): ",
         "value_type": str,
-        "error_msg": "Data de nascimento inválida. A data deve no formato dd/mm/aaaa",
+        "error_msg": "Data de nascimento ou idade inválida(s). A data deve ser no formato dd/mm/aaaa e a idade estar entre 18 e 120 anos.",
     },
     "cpf": {
         "info": "Identificação - CPF",

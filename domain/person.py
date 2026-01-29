@@ -7,26 +7,25 @@ personal attributes (Name, CPF, Birth Date), managing the client's associated
 bank accounts, and storing access credentials (cards) for quick login.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
+from dataclasses import asdict, dataclass
 from datetime import date, datetime
-from typing import ClassVar, NamedTuple
+from typing import ClassVar, cast
 
 from infra import verify
 from shared import validators
 from shared.exceptions import (
     InvalidBirthDateError,
     InvalidNameError,
-    PersonAccountNotFoundError,
     PersonCardNotFoundError,
     PersonDuplicatedCardError,
-    PersonInvalidAccountError,
-    PersonRegisteredAccountError,
 )
 
-from .account import Account
 
-
-class AccountCard(NamedTuple):
+@dataclass(frozen=True)
+class AccountCard:
     """
     Immutable value object representing the credentials for quick account access.
     Acts as a 'saved card' in the client's wallet.
@@ -36,19 +35,34 @@ class AccountCard(NamedTuple):
     branch_code: str
     account_num: str
 
-    def __repr__(self) -> str:
-        """Technical representation for debugging."""
-        return (
-            f"AccountCard(client_cpf={self.client_cpf!r}, "
-            f"branch_code={self.branch_code!r}, "
-            f"account_num={self.account_num!r})"
-        )
-
     def __str__(self) -> str:
         """User-friendly string representation for UI/Menus."""
         return (
             f"CPF: {self.client_cpf} | Ag: {self.branch_code} Conta: {self.account_num}"
         )
+
+    def to_dict(self) -> dict:
+        """
+        Converts the immutable card object into a dictionary.
+
+        Returns:
+            dict: A dictionary representation compatible with JSON serialization.
+        """
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, str]) -> AccountCard:
+        """
+        Factory method to reconstruct an AccountCard from a dictionary.
+
+        Args:
+            data (dict[str, str]): A dictionary containing 'client_cpf', 'branch_code',
+                                   and 'account_num'.
+
+        Returns:
+            AccountCard: A new immutable instance of AccountCard.
+        """
+        return cls(**data)
 
 
 class Person(ABC):
@@ -126,7 +140,7 @@ class Person(ABC):
         return self._calculate_age(self._birth_date)
 
     @abstractmethod
-    def has_account(self, account: Account) -> bool:
+    def has_account(self, card: AccountCard) -> bool:
         """
         Abstract method to check if a specific account belongs to this person.
 
@@ -234,29 +248,61 @@ class Person(ABC):
                 f"Value {birth_date} is invalid for date of birth. Cause: {e}"
             ) from e
 
+    def to_dict(self) -> dict:
+        """
+        Serializes the person's core data into a dictionary format compatible with JSON.
+
+        Converts the internal date object to an ISO 8601 string format (YYYY-MM-DD)
+        to ensure standardization and easy storage.
+
+        Returns:
+            dict: A dictionary containing 'name', 'cpf', and 'birth_date' (ISO format).
+        """
+        return {
+            "name": self._name,
+            "birth_date": self._birth_date.isoformat(),
+            "cpf": self._cpf,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Person:
+        """
+        Factory method that reconstructs a Person (or subclass) instance from a dictionary.
+
+        It handles the conversion of the ISO 8601 date string found in the JSON
+        back to the 'dd/mm/yyyy' string format required by the class constructor.
+        This ensures that all original validations (age, date format) are executed again.
+
+        Args:
+            data (dict): The dictionary containing raw user data.
+
+        Returns:
+            Person: A fully initialized instance of the class (or subclass).
+        """
+        iso_date = datetime.fromisoformat(data["birth_date"])
+        date_str = iso_date.strftime("%d/%m/%Y")
+        return cls(name=data["name"], birth_date=date_str, cpf=data["cpf"])
+
 
 class Client(Person):
     """
     A concrete implementation of Person, representing a bank client.
 
-    Manages a set of associated accounts and a collection of quick-access
-    cards (AccountCard) for streamlined authentication.
+    Manages a unique set of quick-access cards (AccountCard) for streamlined
+    authentication. Acts as a credential holder, completely decoupled from
+    direct Account object ownership.
     """
 
-    client_personal_accounts: set[Account]
-    _account_cards: list[AccountCard]
+    _account_cards: set[AccountCard]
 
     def __init__(self, name: str, birth_date: str, cpf: str):
         """
         Initializes a Client instance.
 
-        Initializes the set of personal accounts and the card list as empty.
+        Initializes the client's wallet of account cards as empty.
         """
-
         super().__init__(name, birth_date, cpf)
-
-        self.client_personal_accounts = set()
-        self._account_cards = []
+        self._account_cards = set()
 
     def __eq__(self, other: object) -> bool:
         """
@@ -283,16 +329,15 @@ class Client(Person):
         """
         return hash(self._cpf)
 
-    def __contains__(self, account: Account) -> bool:
+    def __contains__(self, card: AccountCard) -> bool:
         """
         Allows checking if an account is registered to this client using the `in` operator.
 
         The check leverages the O(1) average time complexity of Python's Set
-        membership test. The account identity is based on its branch code and
-        account number, as defined in Account's `__hash__` and `__eq__`.
+        membership test (Hash Table look-up).
         """
-        if isinstance(account, Account):
-            return account in self.client_personal_accounts
+        if isinstance(card, AccountCard):
+            return card in self._account_cards
         return False
 
     @property
@@ -303,57 +348,49 @@ class Client(Person):
     @property
     def cards(self) -> list[AccountCard]:
         """
-        Returns a copy of the client's list of saved account cards.
+        Returns a sorted list of the client's saved account cards.
+
+        Converts the internal set to a list to facilitate iteration in UI menus.
+        """
+        return sorted(list(self._account_cards), key=lambda c: c.account_num)
+
+    def to_dict(self) -> dict:
+        """
+        Serializes the client data, extending the Person serialization.
+
+        Includes a list of serialized AccountCards ('account_cards') to persist
+        the client's wallet of saved credentials.
 
         Returns:
-            list[AccountCard]: A shallow copy of the stored cards.
+            dict: The complete client state dictionary, including personal info and cards.
         """
-        return self._account_cards.copy()
+        data_dict = super().to_dict()
+        data_dict["account_cards"] = [card.to_dict() for card in self._account_cards]
+        return data_dict
 
-    def has_account(self, account: Account) -> bool:
-        """Checks if a specific account is registered to the client (alias for `__contains__`)."""
-        return account in self
-
-    def add_account(self, account: Account) -> None:
+    @classmethod
+    def from_dict(cls, data: dict) -> Client:
         """
-        Adds a new unique Account instance to the client's list of personal accounts.
+        Reconstructs a Client instance and their associated account cards.
 
-        Internal Logic:
-            Uses `self.has_account(account)` to verify if the association already exists
-            before attempting to add to the internal set.
+        Uses the parent class logic to restore personal attributes and then
+        iteratively deserializes the list of 'account_cards' to repopulate
+        the client's wallet.
 
         Args:
-            account (Account): The account instance to add.
+            data (dict): The dictionary containing client data and the list of cards.
 
-        Raises:
-            PersonInvalidAccountError: If the provided object is not an instance of Account.
-            PersonRegisteredAccountError: If `has_account()` returns True, indicating the
-                account is already associated with this client.
+        Returns:
+            Client: The restored Client object with all its cards.
         """
-        if not isinstance(account, Account):
-            raise PersonInvalidAccountError("Only instances of Account can be added.")
+        instance = cast(Client, super().from_dict(data))
+        cards_list = data.get("account_cards", [])
+        instance._account_cards = {AccountCard.from_dict(card) for card in cards_list}
+        return instance
 
-        if self.has_account(account):
-            raise PersonRegisteredAccountError(
-                f"Account {account} already associated with this client."
-            )
-
-        self.client_personal_accounts.add(account)
-
-    def remove_account(self, account) -> None:
-        """
-        Removes an associated account from the client's registry.
-
-        Args:
-            account (Account): The account instance to remove.
-
-        Raises:
-            PersonAccountNotFoundError: If the account is not found in the client's list.
-        """
-        if account not in self.client_personal_accounts:
-            raise PersonAccountNotFoundError("Account not found")
-
-        self.client_personal_accounts.remove(account)
+    def has_account(self, card: AccountCard) -> bool:
+        """Checks if a specific card is registered to the client (alias for `__contains__`)."""
+        return card in self
 
     def add_card(self, acc_card: AccountCard):
         """
@@ -375,7 +412,7 @@ class Client(Person):
                 " Card already present in the Client's card collection"
             )
 
-        self._account_cards.append(acc_card)
+        self._account_cards.add(acc_card)
 
     def remove_card(self, acc_card: AccountCard):
         """
