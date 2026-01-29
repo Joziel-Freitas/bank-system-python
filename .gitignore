@@ -1,3 +1,20 @@
-.vscode/
+# Cache e Compilados Python
 __pycache__/
 *.py[cod]
+
+# Ambientes Virtuais (Essencial adicionar isso!)
+.venv/
+venv/
+env/
+
+# Configurações de IDE
+.vscode/
+.idea/
+
+# Dados da Aplicação (Banco de Dados)
+# Ignora todos os JSONs dentro da pasta data
+data/*.json
+
+# Opcional: Arquivos do Sistema Operacional
+.DS_Store
+Thumbs.db
