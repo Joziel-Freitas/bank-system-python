@@ -1,88 +1,90 @@
-# 🏦 PyBank System - CLI Banking Application
+🏦 PyBank System - CLI Banking Application
+Aplicação bancária via linha de comando desenvolvida com foco em Arquitetura de Software, Persistência de Dados e Segurança.
 
-> Aplicação bancária via linha de comando desenvolvida com foco em **Lógica de Programação**, **Estrutura de Dados** e **Boas Práticas de Engenharia de Software**.
-
-![Python Version](https://img.shields.io/badge/python-3.12%2B-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
-![Status](https://img.shields.io/badge/status-portfolio-orange)
-
-## 📖 Sobre o Projeto
-
+📖 Sobre o Projeto
 Este projeto foi desenvolvido como parte do meu portfólio de transição de carreira para Desenvolvimento Backend. O objetivo foi criar um sistema que fugisse de scripts simples e apresentasse uma arquitetura organizada, modular e escalável, sem depender de frameworks externos.
 
+Nesta versão 2.0, o sistema evoluiu de uma execução em memória para uma aplicação robusta com persistência de dados e tratamentos avançados de segurança e UX.
+
 O foco central é demonstrar domínio sobre a linguagem Python e conceitos fundamentais de desenvolvimento, como:
-- **Separação de Responsabilidades:** Divisão clara entre interface (CLI), regras de negócio e orquestração.
-- **Tratamento de Erros:** Fluxos robustos que impedem o fechamento abrupto do programa (`crashes`).
-- **Gestão de Estado:** Controle lógico de sessões de usuário (Logado/Deslogado).
 
-## 🏗️ Estrutura e Arquitetura
+Persistência de Dados: Implementação manual de serialização JSON utilizando o padrão Repository.
 
-O sistema foi estruturado em camadas lógicas para garantir desacoplamento e facilidade de manutenção.
+Segurança Ofensiva/Defensiva: Proteção contra enumeração de contas e acesso cruzado (Cross-Access).
 
+Fail-Fast & UX: Fluxos otimizados que validam o estado da conta antes de solicitar interações do usuário.
+
+Gestão de Estado: Controle lógico de sessões e prevenção de crashes em tempo de execução.
+
+🏗️ Estrutura e Arquitetura
+O sistema segue princípios de Clean Architecture, separando responsabilidades entre Domínio, Aplicação e Infraestrutura.
+
+Organização de Pastas
 ### Organização de Pastas
+
 ```text
 BankSystem/
 ├── app/                # Camada de Aplicação
-│   └── controllers.py  # Controladores responsáveis pelo fluxo das operações
+│   └── controllers.py  # Orquestração de fluxo e regras de aplicação (Fail-Fast)
+├── data/               # [NOVO] Persistência de dados (Arquivos .json)
 ├── domain/             # Camada de Domínio (Core do Negócio)
-│   ├── bank.py         # Gerenciamento central das contas e sessões
-│   ├── account.py      # Lógica das contas (Corrente/Poupança)
-│   └── person.py       # Modelos de Cliente e Cartão
-├── infra/              # Camada de Infraestrutura e Interface
+│   ├── bank.py         # Regras de negócio, segurança e validação de sessão
+│   ├── account.py      # Entidades de conta (Dataclasses)
+│   └── person.py       # Entidades de Cliente
+├── infra/              # Camada de Infraestrutura
 │   ├── config.py       # Configurações gerais
-│   ├── io_utils.py     # Utilitários de entrada e saída (Input/Output)
-│   ├── verify.py       # Verificações de baixo nível (Tipagem e Dados)
-│   └── views.py        # Telas e Menus do terminal
+│   ├── repository.py   # [NOVO] Implementação do Repository Pattern (Leitura/Escrita)
+│   ├── io_utils.py     # Utilitários de I/O
+│   └── views.py        # Interface com o usuário (CLI)
 ├── shared/             # Recursos Compartilhados
-│   ├── exceptions.py   # Exceções personalizadas do sistema
-│   ├── types.py        # Enums e Definições de Tipos
-│   └── validators.py   # Validadores de dados (ex: formato de CPF)
-└── main.py             # Ponto de entrada da aplicação
+│   ├── exceptions.py   # Exceções personalizadas
+│   └── validators.py   # Validadores de dados
+└── main.py             # Entrypoint e ciclo de vida da aplicação
 
 🛠️ Destaques Técnicos
-Python Moderno e Tipagem
-Uso extensivo de Type Hints e recursos do Python 3.12+ para garantir um código mais seguro e legível.
+1. Persistência e Serialização (JSON)
+O sistema não perde dados ao ser fechado. Foi implementada uma camada de persistência (infra/repository.py) que serializa o estado complexo do banco (Contas, Clientes e Relacionamentos) para arquivos JSON, garantindo a continuidade das operações entre sessões.
 
-Uso de Generic[T] e TypeVar para criar controladores reutilizáveis.
+2. Python Moderno e Dataclasses
+Substituição de estruturas rígidas por Dataclasses, facilitando a tipagem, a mutabilidade controlada e a serialização dos objetos de domínio. Uso extensivo de Type Hints (Python 3.12+).
 
-Aplicação de match/case para controle de fluxo mais limpo.
+3. Segurança e Tratamento de Erros
+Prevenção de Enumeração: O sistema trata tentativas de acesso cruzado (senha correta em conta errada) como "Conta não encontrada", impedindo que atacantes mapeiem credenciais válidas.
 
-Design Patterns Aplicados
-Conceitos de orientação a objetos aplicados de forma prática:
+Blindagem de Sessão: O loop principal captura falhas críticas de integridade (RuntimeError), realizando o logout seguro do usuário em vez de derrubar a aplicação.
 
-Strategy: Utilizado para definir diferentes comportamentos de validação e operações.
+4. Design Patterns e UX
+Repository Pattern: Abstração da camada de salvamento de dados.
 
-State: Gerenciamento do estado da sessão do usuário (ex: impedir saques se não estiver logado).
+Fail-Fast Strategy: Nos controladores, o sistema verifica o status da conta (Bloqueada/Ativa) antes de solicitar a senha ao usuário, evitando frustração e interações desnecessárias.
 
-Template Method: Estrutura base para diferentes tipos de contas bancárias.
-
-Robustez e Validação (Fail-Fast)
-O sistema implementa uma camada de validação (validators.py e verify.py) que garante
-que dados incorretos sejam barrados antes de serem processados pelas regras de negócio.
-Erros técnicos são capturados e traduzidos em mensagens amigáveis para o usuário.
+Strategy & State: Para validações e gestão de sessão (Logado/Convidado).
 
 🚀 Como Executar
 Pré-requisitos: Python 3.12 ou superior.
 
-Clone o repositório:
+1. Clone o repositório:
 git clone https://github.com/Joziel-Freitas/bank-system-python.git
 
-Entre na pasta do projeto:
+2. Entre na pasta do projeto:
 cd bank-system-python
 
-Execute a aplicação (não requer instalação de bibliotecas externas):
+3.Execute a aplicação (Nenhuma dependência externa necessária):
 python main.py
 
+Nota: A pasta data/ será criada automaticamente na primeira execução para salvar seus dados.
+
 💻 Funcionalidades
-O sistema simula um terminal de autoatendimento com as seguintes opções:
+O sistema simula um terminal bancário completo:
 
-Autenticação: Login via seleção de cartão virtual ou digitação manual.
+Autenticação: Login seguro via Token e Senha.
 
-Transações: Saque (com lógica de cheque especial), Depósito e Transferências.
+Operações Financeiras: Saque e Depósito (com persistência automática).
 
-Consultas: Visualização de saldo e extrato detalhado.
+Gestão de Conta: Visualização de Saldo e Extrato.
 
-Admin: Funcionalidades de desbloqueio de conta mediante validação de segurança.
+Segurança: Bloqueio automático após 3 tentativas falhas de senha.
 
-Autor: Joziel Freitas
-Projeto desenvolvido com foco em Clean Code e Lógica de Programação.
+Recuperação: Fluxo de desbloqueio de conta (Unfreeze) com validação de dados pessoais (KBA - Knowledge Based Authentication).
+
+Autor: Joziel Freitas Projeto desenvolvido com foco em Backend Engineering, Clean Code e Segurança.
