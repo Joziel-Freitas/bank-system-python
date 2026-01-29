@@ -1133,21 +1133,21 @@ class BankSystemController(BaseController[Bank, None]):
                                       or aborted by the user.
             RuntimeError: If called without a session or with an invalid operation type.
         """
+        # Boolean Facade: Checks status once to avoid repeated calls
+        is_active = self._bank_instance.is_account_active(self._active_token)
+
         try:
-            if (
-                operation != OperationType.UNFREEZE
-                and not self._bank_instance.is_account_active(self._active_token)
-            ):
+            # 1. Fail Fast: Block standard operations if account is frozen
+            if not is_active and operation != OperationType.UNFREEZE:
                 views.controller_output("access", "0")
                 raise ControllerOperationError()
 
-            if (
-                operation == OperationType.UNFREEZE
-                and self._bank_instance.is_account_active(self._active_token)
-            ):
+            # 2. Fail Fast: Block unfreeze attempts if already active
+            if is_active and operation == OperationType.UNFREEZE:
                 views.controller_output("unfreeze", "already_active")
                 raise ControllerOperationError()
 
+            # 3. Router
             match operation:
                 case OperationType.TRANSACTION:
                     self._run_transaction()
@@ -1160,8 +1160,8 @@ class BankSystemController(BaseController[Bank, None]):
         except BlockedAccountError as e:
             views.controller_output("access", "0")
             raise ControllerOperationError from e
-        except UserAbortError:
-            raise ControllerOperationError
+        except UserAbortError as e:
+            raise ControllerOperationError from e
 
     def run_controller(self) -> None:
         """

@@ -1,25 +1,24 @@
-🏦 PyBank System - CLI Banking Application
-Aplicação bancária via linha de comando desenvolvida com foco em Arquitetura de Software, Persistência de Dados e Segurança.
+# 🏦 PyBank System - CLI Banking Application
 
-📖 Sobre o Projeto
+Aplicação bancária via linha de comando desenvolvida com foco em **Arquitetura de Software**, **Persistência de Dados** e **Segurança**.
+
+## 📖 Sobre o Projeto
+
 Este projeto foi desenvolvido como parte do meu portfólio de transição de carreira para Desenvolvimento Backend. O objetivo foi criar um sistema que fugisse de scripts simples e apresentasse uma arquitetura organizada, modular e escalável, sem depender de frameworks externos.
 
-Nesta versão 2.0, o sistema evoluiu de uma execução em memória para uma aplicação robusta com persistência de dados e tratamentos avançados de segurança e UX.
+Nesta versão **2.0**, o sistema evoluiu de uma execução em memória para uma aplicação robusta com persistência de dados e tratamentos avançados de segurança e UX.
 
 O foco central é demonstrar domínio sobre a linguagem Python e conceitos fundamentais de desenvolvimento, como:
 
-Persistência de Dados: Implementação manual de serialização JSON utilizando o padrão Repository.
+* **Persistência de Dados:** Implementação manual de serialização JSON utilizando o padrão *Repository*.
+* **Segurança Ofensiva/Defensiva:** Proteção contra enumeração de contas e acesso cruzado (*Cross-Access*).
+* **Fail-Fast & UX:** Fluxos otimizados que validam o estado da conta antes de solicitar interações do usuário.
+* **Gestão de Estado:** Controle lógico de sessões e prevenção de *crashes* em tempo de execução.
 
-Segurança Ofensiva/Defensiva: Proteção contra enumeração de contas e acesso cruzado (Cross-Access).
+## 🏗️ Estrutura e Arquitetura
 
-Fail-Fast & UX: Fluxos otimizados que validam o estado da conta antes de solicitar interações do usuário.
+O sistema segue princípios de **Clean Architecture**, separando responsabilidades entre Domínio, Aplicação e Infraestrutura.
 
-Gestão de Estado: Controle lógico de sessões e prevenção de crashes em tempo de execução.
-
-🏗️ Estrutura e Arquitetura
-O sistema segue princípios de Clean Architecture, separando responsabilidades entre Domínio, Aplicação e Infraestrutura.
-
-Organização de Pastas
 ### Organização de Pastas
 
 ```text
@@ -40,8 +39,9 @@ BankSystem/
 │   ├── exceptions.py   # Exceções personalizadas
 │   └── validators.py   # Validadores de dados
 └── main.py             # Entrypoint e ciclo de vida da aplicação
+```
 
-🛠️ Destaques Técnicos
+## 🛠️ Destaques Técnicos
 1. Persistência e Serialização (JSON)
 O sistema não perde dados ao ser fechado. Foi implementada uma camada de persistência (infra/repository.py) que serializa o estado complexo do banco (Contas, Clientes e Relacionamentos) para arquivos JSON, garantindo a continuidade das operações entre sessões.
 
@@ -60,21 +60,24 @@ Fail-Fast Strategy: Nos controladores, o sistema verifica o status da conta (Blo
 
 Strategy & State: Para validações e gestão de sessão (Logado/Convidado).
 
-🚀 Como Executar
+## 🚀 Como Executar
 Pré-requisitos: Python 3.12 ou superior.
 
-1. Clone o repositório:
+Clone o repositório:
+
 git clone https://github.com/Joziel-Freitas/bank-system-python.git
 
-2. Entre na pasta do projeto:
+Entre na pasta do projeto:
+
 cd bank-system-python
 
-3.Execute a aplicação (Nenhuma dependência externa necessária):
+Execute a aplicação (Nenhuma dependência externa necessária):
+
 python main.py
 
 Nota: A pasta data/ será criada automaticamente na primeira execução para salvar seus dados.
 
-💻 Funcionalidades
+## 💻 Funcionalidades
 O sistema simula um terminal bancário completo:
 
 Autenticação: Login seguro via Token e Senha.
