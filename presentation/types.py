@@ -11,8 +11,6 @@ from decimal import Decimal
 from enum import Enum
 from typing import TypedDict
 
-from settings import ADMIN_EXIT_CODE
-
 type InputType = str | int | float | Decimal | date
 type PresentationT = InputType | MenuType
 
@@ -32,21 +30,6 @@ class InnerConfig(TypedDict):
     info: str
     prompt: str
     error_msg: str
-
-
-class AdminCodeType(Enum):
-    """Enumeration representing hidden administrative commands for the PyBank Terminal.
-
-    This enum does not inherit from MenuType as it is not part of the standard
-    user navigation flow. It acts as an out-of-band signaling mechanism for
-    system administrators or maintenance routines (e.g., safely shutting down
-    the infinite Kiosk Loop).
-
-    Attributes:
-        EXIT_CODE: The secure integer code required to gracefully terminate the application.
-    """
-
-    EXIT_CODE = ADMIN_EXIT_CODE
 
 
 class MenuType(Enum):

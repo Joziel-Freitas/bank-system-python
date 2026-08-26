@@ -43,7 +43,7 @@ VAULT_TIME_SECONDS: timedelta = timedelta(seconds=int(environ.get("VAULT_TIME", 
 # Kiosk Terminal Controls
 # ==============================================================================
 # The secret numeric code used to safely shutdown the Kiosk terminal loop
-ADMIN_EXIT_CODE: int = int(environ.get("PYBANK_ADMIN_CODE", "999999"))
+ADMIN_EXIT_CODE: str = str(environ.get("PYBANK_ADMIN_CODE", "999999"))
 
 # Maximum allowed idle time (in seconds) between keypresses before killing a user session
 INACTIVITY_TIMEOUT: int = int(environ.get("INACTIVITY_TIMEOUT", "30"))
