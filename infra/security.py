@@ -23,35 +23,35 @@ from shared.exceptions import (
 class PasswordHasher:
     """Provides cryptographic hashing and verification for user credentials using bcrypt."""
 
-    def generate_password_hash(self, password_str: str) -> str:
+    def generate_password_hash(self, pwd_str: str) -> str:
         """Generates a secure cryptographic hash for a plain-text password.
 
         Uses the bcrypt algorithm with a randomly generated salt to ensure
         protection against rainbow table and brute-force attacks.
 
         Args:
-            password_str (str): The plain-text password string.
+            pwd_str (str): The plain-text password string.
 
         Returns:
             str: The securely hashed password string encoded in UTF-8.
         """
-        pwd_bytes = password_str.encode("utf-8")
+        pwd_bytes = pwd_str.encode("utf-8")
         salt = bcrypt.gensalt()
         pwd_hash_bytes = bcrypt.hashpw(pwd_bytes, salt)
         return pwd_hash_bytes.decode("utf-8")
 
-    def check_password(self, pwd_str: str, pwd_hash_str: str) -> bool:
+    def check_password(self, pwd_str: str, pwd_hash: str) -> bool:
         """Verifies a plain-text password string against a bcrypt hash.
 
         Args:
             pwd_str (str): The raw plain-text password string to verify.
-            pwd_hash_str (str): The target bcrypt hash string to compare against.
+            pwd_hash (str): The target bcrypt hash string to compare against.
 
         Returns:
             bool: True if the raw password matches the hash, False otherwise.
         """
         pwd_bytes = pwd_str.encode("utf-8")
-        hashed_pwd_bytes = pwd_hash_str.encode("utf-8")
+        hashed_pwd_bytes = pwd_hash.encode("utf-8")
 
         return bcrypt.checkpw(pwd_bytes, hashed_pwd_bytes)
 
@@ -111,18 +111,18 @@ class TokenService:
         )
 
     def generate_access_token(
-        self, auth_token: AuthToken, password_hash: str
+        self, auth_token: AuthToken, pwd_hash: str
     ) -> AccessToken:
         """Issues an AccessToken binding account coordinates and password hash into an HMAC signature.
 
         Args:
             auth_token (AuthToken): The source identification token.
-            password_hash (str): The active password hash string to bind to the signature.
+            pwd_hash (str): The active password hash string to bind to the signature.
 
         Returns:
             AccessToken: A signed access token object.
         """
-        payload = f"{auth_token.cpf}:{auth_token.branch_code}:{auth_token.account_num}:{password_hash}"
+        payload = f"{auth_token.cpf}:{auth_token.branch_code}:{auth_token.account_num}:{pwd_hash}"
         signature = self._sign_token_payload(payload)
 
         return AccessToken(
