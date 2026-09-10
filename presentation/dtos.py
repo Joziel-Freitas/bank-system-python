@@ -16,17 +16,17 @@ class ServiceContainerDTO:
     transactions, and administrative account workflows.
 
     Attributes:
-        auth_service (AuthService): Application service managing authentication,
-            lobby access, and vault authorization workflows.
-        onboarding_service (OnboardingService): Application service orchestrating
-            account holder creation and account registration workflows.
-        banking_service (BankingOperationsService): Application service executing
-            deposits, gatekept withdrawals, statements, and summary projections.
         account_management_service (AccountManagementService): Application service
             handling password updates, account unfreezing, and closure operations.
+        auth_service (AuthService): Application service managing authentication,
+            lobby access, and vault authorization workflows.
+        banking_service (BankingOperationsService): Application service executing
+            deposits, gatekept withdrawals, statements, and summary projections.
+        onboarding_service (OnboardingService): Application service orchestrating
+            account holder creation and account registration workflows.
     """
 
-    auth_service: AuthService
-    onboarding_service: OnboardingService
-    banking_service: BankingOperationsService
     account_management_service: AccountManagementService
+    auth_service: AuthService
+    banking_service: BankingOperationsService
+    onboarding_service: OnboardingService
